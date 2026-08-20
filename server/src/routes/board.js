@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../db.js'
+import { decryptUser } from '../lib/fieldCrypto.js'
 
 // Board posts are readable by every signed-in member; only the author can edit or delete.
 const router = Router()
@@ -9,7 +10,7 @@ router.get('/', async (req, res) => {
     orderBy: { createdAt: 'desc' },
     include: { author: { select: { id: true, name: true, picture: true } } },
   })
-  res.json(posts)
+  res.json(posts.map((post) => ({ ...post, author: decryptUser(post.author) })))
 })
 
 router.post('/', async (req, res) => {
@@ -29,7 +30,7 @@ router.get('/:id', async (req, res) => {
     include: { author: { select: { id: true, name: true, picture: true } } },
   })
   if (!post) return res.status(404).json({ error: 'Not found' })
-  res.json(post)
+  res.json({ ...post, author: decryptUser(post.author) })
 })
 
 router.patch('/:id', async (req, res) => {

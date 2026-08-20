@@ -4,18 +4,6 @@
 
 export const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
 
-function decodeJwt(token) {
-  const payload = token.split('.')[1]
-  const base64 = payload.replace(/-/g, '+').replace(/_/g, '/')
-  const json = decodeURIComponent(
-    atob(base64)
-      .split('')
-      .map((c) => '%' + c.charCodeAt(0).toString(16).padStart(2, '0'))
-      .join(''),
-  )
-  return JSON.parse(json)
-}
-
 function waitForGis() {
   return new Promise((resolve, reject) => {
     if (window.google?.accounts?.id) {
@@ -37,21 +25,17 @@ function waitForGis() {
 
 let initialized = false
 
-export async function initGoogleSignIn(onSignIn) {
+// onCredential receives the raw Google ID token (JWT string) — the backend
+// verifies it and returns the authoritative user record, so the frontend
+// never needs to decode or trust the token's claims itself.
+export async function initGoogleSignIn(onCredential) {
   if (!GOOGLE_CLIENT_ID) return false
   await waitForGis()
 
   if (!initialized) {
     window.google.accounts.id.initialize({
       client_id: GOOGLE_CLIENT_ID,
-      callback: (response) => {
-        const claims = decodeJwt(response.credential)
-        onSignIn({
-          name: claims.name,
-          email: claims.email,
-          picture: claims.picture,
-        })
-      },
+      callback: (response) => onCredential(response.credential),
       auto_select: false,
       cancel_on_tap_outside: true,
     })

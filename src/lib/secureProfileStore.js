@@ -1,18 +1,22 @@
-// Encrypts the cached profile (name, email, picture) at rest in the browser.
+// Encrypts the cached session (app token + display profile) at rest in the
+// browser.
 //
 // The AES-GCM key is generated as non-extractable and kept only inside
 // IndexedDB as a CryptoKey object — its raw bytes are never exposed to JS,
 // so it can't be read from devtools/localStorage the way a plain string key
-// could. localStorage only ever holds ciphertext + iv, never the profile
-// in the clear. This protects against casual inspection of cached data;
-// it is not a substitute for server-side session management once a backend
-// exists.
+// could. localStorage only ever holds ciphertext + iv, never the session
+// in the clear.
+//
+// This is purely a client-side cache for instant UI state ("already signed
+// in as X") — the server (RDS) is the source of truth for the user record
+// itself. The cached token is only ever sent to the server when an actual
+// API call needs it; there's no "am I still logged in?" round trip on load.
 
 const DB_NAME = 'acmebloc-secure-store'
 const DB_VERSION = 1
 const KEY_STORE = 'keys'
 const KEY_ID = 'profile-key'
-const STORAGE_KEY = 'acmebloc.profile.v1'
+const STORAGE_KEY = 'acmebloc.session.v2'
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -54,10 +58,11 @@ async function getOrCreateKey() {
   return key
 }
 
-export async function saveProfile(profile) {
+// session: { token, profile: { name, email, picture } }
+export async function saveSession(session) {
   const key = await getOrCreateKey()
   const iv = crypto.getRandomValues(new Uint8Array(12))
-  const plaintext = new TextEncoder().encode(JSON.stringify(profile))
+  const plaintext = new TextEncoder().encode(JSON.stringify(session))
   const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext)
 
   localStorage.setItem(
@@ -69,7 +74,7 @@ export async function saveProfile(profile) {
   )
 }
 
-export async function loadProfile() {
+export async function loadSession() {
   const raw = localStorage.getItem(STORAGE_KEY)
   if (!raw) return null
 
@@ -89,7 +94,7 @@ export async function loadProfile() {
   }
 }
 
-export async function deleteProfile() {
+export async function clearSession() {
   localStorage.removeItem(STORAGE_KEY)
   await new Promise((resolve) => {
     const request = indexedDB.deleteDatabase(DB_NAME)

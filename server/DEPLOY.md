@@ -230,11 +230,39 @@ curl -X POST -H "Content-Type: application/json" -d '{}' \
 브라우저로 `https://manager.acmebloc.com` 접속해서 실제 Gmail 로그인 팝업까지 떠야 함 (0단계에서
 Google Cloud Console에 이 origin을 등록해뒀는지가 핵심).
 
-## 11. 다음 단계 (아직 안 한 것)
+## 11. 로그인 서버 연동 + 필드 암호화 반영 (기존 배포에 추가 적용)
 
-프론트엔드 코드 자체는 아직 이 API를 호출하도록 연동되어 있지 않음 (지금은 로그인 정보를
-브라우저에만 저장). 위 10번 확인까지 끝나면 알려줘 — 로그인 시 `/api/auth/login`을 호출해서 받은
-토큰으로 프로젝트/일감/일정/게시판 CRUD를 실제로 붙이는 프론트엔드 작업을 이어서 진행할게.
+프론트엔드가 이제 `/api/auth/login`을 실제로 호출하고, `User` 테이블의 `email`/`name`/`picture`는
+서버에서 AES-256-GCM으로 암호화해서 저장함 (RDS 자체 암호화에 더한 애플리케이션 레벨 암호화).
+이미 배포해둔 서버에는 아래 작업을 추가로 해줘야 함:
+
+```bash
+sudo -u manager /bin/bash
+cd /var/www/manager/app
+git pull
+npm install && npm run build
+
+cd server
+npm install
+npx prisma migrate deploy   # email 유니크 제약 제거 마이그레이션 적용
+```
+
+새 환경변수 `FIELD_ENCRYPTION_KEY` 추가 (`.env`에 없으면 서버가 기동 시 에러남):
+
+```bash
+openssl rand -hex 32
+```
+
+나온 값을 `.env`에 추가:
+
+```bash
+echo "FIELD_ENCRYPTION_KEY=여기에_생성한_값" >> .env
+chmod 600 .env
+exit   # manager 셸에서 나가기
+
+sudo systemctl restart pm2-manager
+curl http://localhost:4000/health
+```
 
 ## 코드 업데이트할 때마다
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { GOOGLE_CLIENT_ID, initGoogleSignIn, renderGoogleButton } from '../lib/googleAuth'
-import { loadProfile, saveProfile } from '../lib/secureProfileStore'
+import { loadSession, saveSession } from '../lib/secureProfileStore'
 
 function GoogleGIcon() {
   return (
@@ -26,21 +26,38 @@ function GoogleGIcon() {
   )
 }
 
-// Standalone login screen — no menu here, just sign-in. A cached login shows
-// the "~로 접속" button instead of the Gmail button; either path lands on
-// the dashboard once the user is signed in.
+// Standalone login screen — no menu here, just sign-in. A cached session
+// shows the "~로 접속" button instead of the Gmail button; either path lands
+// on the dashboard once the user is signed in. The session's presence alone
+// decides that UI state — no server round trip just to check "am I logged in".
 function LoginPage() {
-  const [profile, setProfile] = useState(null)
+  const [session, setSession] = useState(null)
   const [gsiReady, setGsiReady] = useState(false)
+  const [signingIn, setSigningIn] = useState(false)
   const googleButtonRef = useRef(null)
   const fakeButtonRef = useRef(null)
   const navigate = useNavigate()
 
   const handleCredential = useCallback(
-    async (nextProfile) => {
-      await saveProfile(nextProfile)
-      setProfile(nextProfile)
-      navigate('/dashboard')
+    async (idToken) => {
+      setSigningIn(true)
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ idToken }),
+        })
+        if (!res.ok) throw new Error('login failed')
+        const { token, user } = await res.json()
+        const nextSession = { token, profile: user }
+        await saveSession(nextSession)
+        setSession(nextSession)
+        navigate('/dashboard')
+      } catch (err) {
+        console.error('Google sign-in failed:', err)
+      } finally {
+        setSigningIn(false)
+      }
     },
     [navigate],
   )
@@ -48,8 +65,8 @@ function LoginPage() {
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      const cached = await loadProfile()
-      if (!cancelled) setProfile(cached)
+      const cached = await loadSession()
+      if (!cancelled) setSession(cached)
 
       const available = await initGoogleSignIn(handleCredential)
       if (!cancelled) setGsiReady(available)
@@ -60,29 +77,29 @@ function LoginPage() {
   }, [handleCredential])
 
   useEffect(() => {
-    if (gsiReady && !profile && googleButtonRef.current && fakeButtonRef.current) {
+    if (gsiReady && !session && googleButtonRef.current && fakeButtonRef.current) {
       const width = Math.round(fakeButtonRef.current.getBoundingClientRect().width)
       renderGoogleButton(googleButtonRef.current, { width })
     }
-  }, [gsiReady, profile])
+  }, [gsiReady, session])
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-8 bg-white px-4 dark:bg-gray-900">
       <h1 className="text-4xl font-semibold text-gray-900 dark:text-white">Manager</h1>
 
-      {profile ? (
+      {session ? (
         <button
           type="button"
           onClick={() => navigate('/dashboard')}
           className="flex h-10 items-center gap-2 whitespace-nowrap rounded-full border border-gray-300 bg-white px-[10px] text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700"
         >
           <img
-            src={profile.picture}
+            src={session.profile.picture}
             alt=""
             referrerPolicy="no-referrer"
             className="h-6 w-6 rounded-full"
           />
-          <span>{profile.email}로 접속</span>
+          <span>{session.profile.email}로 접속</span>
         </button>
       ) : GOOGLE_CLIENT_ID ? (
         <div className="relative inline-flex">
@@ -94,7 +111,7 @@ function LoginPage() {
             className="pointer-events-none flex h-10 items-center gap-2 whitespace-nowrap rounded-full border border-gray-300 bg-white px-[10px] text-sm font-medium text-gray-700 shadow-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
           >
             <GoogleGIcon />
-            Gmail 로그인
+            {signingIn ? '로그인 중...' : 'Gmail 로그인'}
           </button>
           {/* Google's real "Sign in with Google" button is rendered here and
              layered on top, invisible (opacity-0) but still interactive — a

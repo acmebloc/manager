@@ -1,4 +1,5 @@
 import { prisma } from '../db.js'
+import { decryptUser } from '../lib/fieldCrypto.js'
 import { verifyAppToken } from '../lib/appToken.js'
 
 // Verifies the app-issued JWT (obtained once via POST /api/auth/login) rather
@@ -13,7 +14,7 @@ export async function requireAuth(req, res, next) {
     const payload = verifyAppToken(token)
     const user = await prisma.user.findUnique({ where: { id: payload.sub } })
     if (!user) return res.status(401).json({ error: 'User not found' })
-    req.user = user
+    req.user = decryptUser(user)
     next()
   } catch {
     res.status(401).json({ error: 'Invalid or expired token' })

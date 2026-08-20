@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { endGoogleSession } from '../lib/googleAuth'
 import { resizeImageFile } from '../lib/imageUtils'
-import { deleteProfile, loadProfile, saveProfile } from '../lib/secureProfileStore'
+import { clearSession, loadSession, saveSession } from '../lib/secureProfileStore'
 
 function PencilIcon() {
   return (
@@ -13,7 +13,7 @@ function PencilIcon() {
 }
 
 function MyPage() {
-  const [profile, setProfile] = useState(null)
+  const [session, setSession] = useState(null)
   const [loading, setLoading] = useState(true)
   const [isEditingName, setIsEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
@@ -23,13 +23,13 @@ function MyPage() {
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      const cached = await loadProfile()
+      const cached = await loadSession()
       if (cancelled) return
       if (!cached) {
         navigate('/', { replace: true })
         return
       }
-      setProfile(cached)
+      setSession(cached)
       setLoading(false)
     })()
     return () => {
@@ -38,24 +38,24 @@ function MyPage() {
   }, [navigate])
 
   const handleWithdraw = useCallback(async () => {
-    await deleteProfile()
+    await clearSession()
     endGoogleSession()
     navigate('/', { replace: true })
   }, [navigate])
 
   const startEditName = () => {
-    setNameDraft(profile.name)
+    setNameDraft(session.profile.name)
     setIsEditingName(true)
   }
 
   const saveName = useCallback(async () => {
     const trimmed = nameDraft.trim()
     if (!trimmed) return
-    const next = { ...profile, name: trimmed }
-    await saveProfile(next)
-    setProfile(next)
+    const next = { ...session, profile: { ...session.profile, name: trimmed } }
+    await saveSession(next)
+    setSession(next)
     setIsEditingName(false)
-  }, [nameDraft, profile])
+  }, [nameDraft, session])
 
   const handlePickImage = () => fileInputRef.current?.click()
 
@@ -65,14 +65,16 @@ function MyPage() {
       event.target.value = ''
       if (!file) return
       const dataUrl = await resizeImageFile(file)
-      const next = { ...profile, picture: dataUrl }
-      await saveProfile(next)
-      setProfile(next)
+      const next = { ...session, profile: { ...session.profile, picture: dataUrl } }
+      await saveSession(next)
+      setSession(next)
     },
-    [profile],
+    [session],
   )
 
   if (loading) return null
+
+  const { profile } = session
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-6 px-4">

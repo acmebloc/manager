@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { OAuth2Client } from 'google-auth-library'
 import { prisma } from '../db.js'
+import { decryptUser, encryptField } from '../lib/fieldCrypto.js'
 import { signAppToken } from '../lib/appToken.js'
 
 const router = Router()
@@ -26,16 +27,20 @@ router.post('/login', async (req, res) => {
 
   const user = await prisma.user.upsert({
     where: { googleSub: payload.sub },
-    update: { email: payload.email, name: payload.name, picture: payload.picture },
+    update: {
+      email: encryptField(payload.email),
+      name: encryptField(payload.name),
+      picture: encryptField(payload.picture),
+    },
     create: {
       googleSub: payload.sub,
-      email: payload.email,
-      name: payload.name,
-      picture: payload.picture,
+      email: encryptField(payload.email),
+      name: encryptField(payload.name),
+      picture: encryptField(payload.picture),
     },
   })
 
-  res.json({ token: signAppToken(user), user })
+  res.json({ token: signAppToken(user), user: decryptUser(user) })
 })
 
 export default router
