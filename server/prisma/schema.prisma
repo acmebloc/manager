@@ -16,10 +16,11 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  projects  Project[]   @relation("ProjectOwner")
-  tasks     Task[]      @relation("TaskAssignee")
-  schedules Schedule[]  @relation("ScheduleOwner")
-  posts     BoardPost[] @relation("PostAuthor")
+  projects  Project[]      @relation("ProjectOwner")
+  tasks     Task[]         @relation("TaskAssignee")
+  schedules Schedule[]     @relation("ScheduleOwner")
+  posts     BoardPost[]    @relation("PostAuthor")
+  oidcCodes OidcAuthCode[]
 }
 
 model Project {
@@ -70,4 +71,19 @@ model BoardPost {
   author    User     @relation("PostAuthor", fields: [authorId], references: [id])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Short-lived authorization codes for our OIDC provider (used by BookStack
+// and any future service that should share the Manager login). One row per
+// in-flight login, deleted once exchanged for a token or expired.
+model OidcAuthCode {
+  code                String   @id
+  userId              String
+  user                User     @relation(fields: [userId], references: [id])
+  clientId             String
+  redirectUri          String
+  codeChallenge        String?
+  codeChallengeMethod  String?
+  expiresAt            DateTime
+  createdAt            DateTime @default(now())
 }

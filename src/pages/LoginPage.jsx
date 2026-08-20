@@ -26,6 +26,21 @@ function GoogleGIcon() {
   )
 }
 
+// If we got here via a redirect from the OIDC /authorize endpoint (e.g.
+// BookStack, because there was no manager_session cookie yet), `continue`
+// points back at that same /oidc/authorize request so it can finish once
+// we're actually logged in. That's a backend route, not a frontend one, so
+// it needs a real navigation — not React Router.
+function goAfterLogin(navigate) {
+  const params = new URLSearchParams(window.location.search)
+  const continueUrl = params.get('continue')
+  if (continueUrl) {
+    window.location.href = continueUrl
+  } else {
+    navigate('/dashboard')
+  }
+}
+
 // Standalone login screen — no menu here, just sign-in. A cached session
 // shows the "~로 접속" button instead of the Gmail button; either path lands
 // on the dashboard once the user is signed in. The session's presence alone
@@ -52,7 +67,7 @@ function LoginPage() {
         const nextSession = { token, profile: user }
         await saveSession(nextSession)
         setSession(nextSession)
-        navigate('/dashboard')
+        goAfterLogin(navigate)
       } catch (err) {
         console.error('Google sign-in failed:', err)
       } finally {
@@ -90,7 +105,7 @@ function LoginPage() {
       {session ? (
         <button
           type="button"
-          onClick={() => navigate('/dashboard')}
+          onClick={() => goAfterLogin(navigate)}
           className="flex h-10 items-center gap-2 whitespace-nowrap rounded-full border border-gray-300 bg-white px-[10px] text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700"
         >
           <img

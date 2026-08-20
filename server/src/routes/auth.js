@@ -41,7 +41,20 @@ router.post('/login', async (req, res) => {
     },
   })
 
-  res.json({ token: signAppToken(user), user: decryptUser(user) })
+  const token = signAppToken(user)
+
+  // The SPA uses `token` as a Bearer header for its own API calls. The
+  // cookie is separate — it's read server-side by the OIDC /authorize
+  // endpoint during a full-page redirect (e.g. from BookStack), where no JS
+  // is around to attach a Bearer header.
+  res.cookie('manager_session', token, {
+    httpOnly: true,
+    secure: (process.env.FRONTEND_ORIGIN || '').startsWith('https://'),
+    sameSite: 'lax',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  })
+
+  res.json({ token, user: decryptUser(user) })
 })
 
 export default router

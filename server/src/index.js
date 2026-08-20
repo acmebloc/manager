@@ -1,10 +1,12 @@
 import 'dotenv/config'
+import cookieParser from 'cookie-parser'
 import cors from 'cors'
 import express from 'express'
 import { requireAuth } from './middleware/auth.js'
 import authRouter from './routes/auth.js'
 import boardRouter from './routes/board.js'
 import meRouter from './routes/me.js'
+import oidcRouter from './routes/oidc.js'
 import projectsRouter from './routes/projects.js'
 import schedulesRouter from './routes/schedules.js'
 import tasksRouter from './routes/tasks.js'
@@ -13,6 +15,7 @@ const app = express()
 
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN }))
 app.use(express.json())
+app.use(cookieParser())
 
 app.get('/health', (req, res) => res.json({ ok: true }))
 
@@ -22,6 +25,11 @@ app.use('/api/projects/:projectId/tasks', requireAuth, tasksRouter)
 app.use('/api/projects', requireAuth, projectsRouter)
 app.use('/api/schedules', requireAuth, schedulesRouter)
 app.use('/api/board', requireAuth, boardRouter)
+// No requireAuth here — the OIDC endpoints authenticate themselves (session
+// cookie for /authorize, client_id/secret for /token, access token for
+// /userinfo), since they're called by external parties (browser redirects,
+// BookStack's own server), not our SPA's Bearer-token API calls.
+app.use('/oidc', oidcRouter)
 
 const port = process.env.PORT || 4000
 app.listen(port, () => {
