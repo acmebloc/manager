@@ -25,12 +25,13 @@ router.post('/login', async (req, res) => {
     return res.status(401).json({ error: 'Invalid Google ID token' })
   }
 
+  // Only fill name/picture from Google on first sign-up — a returning user
+  // may have customized them on the mypage, and those edits are the ones
+  // that should stick, not whatever Google happens to report this time.
   const user = await prisma.user.upsert({
     where: { googleSub: payload.sub },
     update: {
       email: encryptField(payload.email),
-      name: encryptField(payload.name),
-      picture: encryptField(payload.picture),
     },
     create: {
       googleSub: payload.sub,

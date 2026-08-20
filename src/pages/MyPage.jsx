@@ -12,11 +12,29 @@ function PencilIcon() {
   )
 }
 
+// Persists a profile field (name/picture) to the server and, on success,
+// updates the local session cache with the server's decrypted response so
+// the cache never drifts from what's actually stored.
+async function updateProfile(session, patch) {
+  const res = await fetch('/api/me', {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${session.token}`,
+    },
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) throw new Error('profile update failed')
+  const user = await res.json()
+  return { ...session, profile: user }
+}
+
 function MyPage() {
   const [session, setSession] = useState(null)
   const [loading, setLoading] = useState(true)
   const [isEditingName, setIsEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
+  const [error, setError] = useState('')
   const fileInputRef = useRef(null)
   const navigate = useNavigate()
 
@@ -51,10 +69,15 @@ function MyPage() {
   const saveName = useCallback(async () => {
     const trimmed = nameDraft.trim()
     if (!trimmed) return
-    const next = { ...session, profile: { ...session.profile, name: trimmed } }
-    await saveSession(next)
-    setSession(next)
-    setIsEditingName(false)
+    try {
+      const next = await updateProfile(session, { name: trimmed })
+      await saveSession(next)
+      setSession(next)
+      setIsEditingName(false)
+      setError('')
+    } catch {
+      setError('이름 저장에 실패했어요. 다시 시도해주세요.')
+    }
   }, [nameDraft, session])
 
   const handlePickImage = () => fileInputRef.current?.click()
@@ -65,9 +88,14 @@ function MyPage() {
       event.target.value = ''
       if (!file) return
       const dataUrl = await resizeImageFile(file)
-      const next = { ...session, profile: { ...session.profile, picture: dataUrl } }
-      await saveSession(next)
-      setSession(next)
+      try {
+        const next = await updateProfile(session, { picture: dataUrl })
+        await saveSession(next)
+        setSession(next)
+        setError('')
+      } catch {
+        setError('사진 저장에 실패했어요. 다시 시도해주세요.')
+      }
     },
     [session],
   )
@@ -143,6 +171,8 @@ function MyPage() {
         )}
 
         <p className="text-sm text-gray-500 dark:text-gray-400">{profile.email}</p>
+
+        {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
       </div>
 
       <button
