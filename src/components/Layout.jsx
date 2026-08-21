@@ -1,4 +1,6 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { NavLink, Navigate, Outlet } from 'react-router-dom'
+import { loadSession } from '../lib/secureProfileStore'
 
 // BookStack lives at /board on this same domain but is a separate app —
 // Apache hands that path straight to it, so it needs a real browser
@@ -19,7 +21,31 @@ const linkClassName = ({ isActive }) =>
       : 'border-transparent text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'
   }`
 
+// Guards every route nested under this layout (dashboard/projects/tasks/
+// schedule/mypage) — without this, typing one of those URLs directly loaded
+// the page with no session check at all (only mypage had its own check).
+// Same as everywhere else in this app: reads the local encrypted cache only,
+// no server round trip just to answer "am I logged in".
 function Layout() {
+  const [checked, setChecked] = useState(false)
+  const [hasSession, setHasSession] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const session = await loadSession()
+      if (cancelled) return
+      setHasSession(Boolean(session))
+      setChecked(true)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (!checked) return null
+  if (!hasSession) return <Navigate to="/" replace />
+
   return (
     <div className="flex min-h-screen flex-col bg-white dark:bg-gray-900">
       <nav className="flex items-center gap-1 border-b border-gray-200 px-4 dark:border-gray-700">
