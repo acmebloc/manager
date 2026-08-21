@@ -56,6 +56,15 @@ function MyPage() {
   }, [navigate])
 
   const handleWithdraw = useCallback(async () => {
+    // Also tells the server to drop the httpOnly session cookie — without
+    // this, that cookie (which is all /oidc/authorize checks) stays valid
+    // until its natural expiry, so BookStack would keep silently logging
+    // the "withdrawn" user back in even though Manager looks logged out.
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' })
+    } catch {
+      // best-effort — still clear the local session below even if this fails
+    }
     await clearSession()
     endGoogleSession()
     navigate('/', { replace: true })

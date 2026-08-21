@@ -63,4 +63,15 @@ router.post('/login', async (req, res) => {
   res.json({ token, user: decryptUser(user) })
 })
 
+// Clears the httpOnly session cookie. The SPA's own logged-in state lives in
+// the encrypted browser cache and is cleared separately (there's no
+// server-side token revocation, the JWT is just stateless) — but without
+// this, that cookie stays valid until its natural expiry, so a "withdrawn"
+// user who looks logged out in Manager would still get silently logged into
+// BookStack via /oidc/authorize, which only ever checks this cookie.
+router.post('/logout', (req, res) => {
+  res.clearCookie('manager_session', { path: '/' })
+  res.json({ ok: true })
+})
+
 export default router
