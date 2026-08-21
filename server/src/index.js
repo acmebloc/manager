@@ -5,7 +5,6 @@ import express from 'express'
 import { requireAuth } from './middleware/auth.js'
 import authRouter from './routes/auth.js'
 import avatarRouter from './routes/avatar.js'
-import boardRouter from './routes/board.js'
 import meRouter from './routes/me.js'
 import oidcRouter from './routes/oidc.js'
 import projectsRouter from './routes/projects.js'
@@ -31,7 +30,6 @@ app.use('/api/me', requireAuth, meRouter)
 app.use('/api/projects/:projectId/tasks', requireAuth, tasksRouter)
 app.use('/api/projects', requireAuth, projectsRouter)
 app.use('/api/schedules', requireAuth, schedulesRouter)
-app.use('/api/board', requireAuth, boardRouter)
 // No requireAuth here — the OIDC endpoints authenticate themselves (session
 // cookie for /authorize, client_id/secret for /token, access token for
 // /userinfo), since they're called by external parties (browser redirects,

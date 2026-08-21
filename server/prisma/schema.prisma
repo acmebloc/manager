@@ -19,7 +19,6 @@ model User {
   projects  Project[]      @relation("ProjectOwner")
   tasks     Task[]         @relation("TaskAssignee")
   schedules Schedule[]     @relation("ScheduleOwner")
-  posts     BoardPost[]    @relation("PostAuthor")
   oidcCodes OidcAuthCode[]
 }
 
@@ -61,16 +60,6 @@ model Schedule {
   owner     User      @relation("ScheduleOwner", fields: [ownerId], references: [id])
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
-}
-
-model BoardPost {
-  id        String   @id @default(cuid())
-  title     String
-  content   String
-  authorId  String
-  author    User     @relation("PostAuthor", fields: [authorId], references: [id])
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
 }
 
 // Short-lived authorization codes for our OIDC provider (used by BookStack
