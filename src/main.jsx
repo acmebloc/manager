@@ -3,7 +3,6 @@ import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import './index.css'
 import Layout from './components/Layout.jsx'
-import BoardPage from './pages/BoardPage.jsx'
 import DashboardPage from './pages/DashboardPage.jsx'
 import LoginPage from './pages/LoginPage.jsx'
 import MyPage from './pages/MyPage.jsx'
@@ -21,7 +20,6 @@ createRoot(document.getElementById('root')).render(
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/tasks" element={<TasksPage />} />
           <Route path="/schedule" element={<SchedulePage />} />
-          <Route path="/board" element={<BoardPage />} />
           <Route path="/mypage" element={<MyPage />} />
         </Route>
       </Routes>

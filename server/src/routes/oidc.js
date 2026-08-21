@@ -20,6 +20,13 @@ function issuerUrl() {
   return process.env.OIDC_ISSUER
 }
 
+// Points at our own /api/avatar/:userId instead of the raw stored value, so
+// consumers (BookStack) always see whatever picture is currently set here,
+// not a snapshot taken at login time.
+function avatarUrl(userId) {
+  return `${process.env.FRONTEND_ORIGIN}/api/avatar/${userId}`
+}
+
 router.get('/.well-known/openid-configuration', (req, res) => {
   const issuer = issuerUrl()
   res.json({
@@ -140,7 +147,7 @@ router.post('/token', express.urlencoded({ extended: false }), async (req, res) 
   const signingKey = await getSigningKey()
   const issuer = issuerUrl()
 
-  const idToken = await new jose.SignJWT({ email: user.email, name: user.name, picture: user.picture })
+  const idToken = await new jose.SignJWT({ email: user.email, name: user.name, picture: avatarUrl(user.id) })
     .setProtectedHeader({ alg: 'RS256', kid: OIDC_KEY_ID })
     .setSubject(user.id)
     .setIssuer(issuer)
@@ -176,7 +183,7 @@ router.get('/userinfo', async (req, res) => {
     const user = await prisma.user.findUnique({ where: { id: payload.sub } })
     if (!user) return res.status(401).json({ error: 'invalid_token' })
     const decrypted = decryptUser(user)
-    res.json({ sub: decrypted.id, email: decrypted.email, name: decrypted.name, picture: decrypted.picture })
+    res.json({ sub: decrypted.id, email: decrypted.email, name: decrypted.name, picture: avatarUrl(decrypted.id) })
   } catch {
     res.status(401).json({ error: 'invalid_token' })
   }

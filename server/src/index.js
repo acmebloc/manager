@@ -4,10 +4,12 @@ import cors from 'cors'
 import express from 'express'
 import { requireAuth } from './middleware/auth.js'
 import authRouter from './routes/auth.js'
+import avatarRouter from './routes/avatar.js'
 import boardRouter from './routes/board.js'
 import meRouter from './routes/me.js'
 import oidcRouter from './routes/oidc.js'
 import projectsRouter from './routes/projects.js'
+import publicProfileRouter from './routes/publicProfile.js'
 import schedulesRouter from './routes/schedules.js'
 import tasksRouter from './routes/tasks.js'
 
@@ -20,6 +22,11 @@ app.use(cookieParser())
 app.get('/health', (req, res) => res.json({ ok: true }))
 
 app.use('/api/auth', authRouter)
+// Public — serves the current profile picture by user id, no auth required
+// (an <img src> can't send a Bearer header). See avatar.js for why.
+app.use('/api/avatar', avatarRouter)
+// Public — same reasoning as /api/avatar, but for the display name.
+app.use('/api/public-profile', publicProfileRouter)
 app.use('/api/me', requireAuth, meRouter)
 app.use('/api/projects/:projectId/tasks', requireAuth, tasksRouter)
 app.use('/api/projects', requireAuth, projectsRouter)
