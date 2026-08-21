@@ -16,23 +16,45 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  projects  Project[]      @relation("ProjectOwner")
-  tasks     Task[]         @relation("TaskAssignee")
-  schedules Schedule[]     @relation("ScheduleOwner")
-  oidcCodes OidcAuthCode[]
+  projects    Project[]       @relation("ProjectOwner")
+  memberships ProjectMember[]
+  tasks       Task[]          @relation("TaskAssignee")
+  schedules   Schedule[]      @relation("ScheduleOwner")
+  oidcCodes   OidcAuthCode[]
 }
 
 model Project {
   id          String   @id @default(cuid())
   name        String
   description String?
+  // Whoever created it. Kept alongside the membership rows because the owner
+  // is the one member who can't be removed or demoted by another admin.
   ownerId     String
   owner       User     @relation("ProjectOwner", fields: [ownerId], references: [id])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  members   ProjectMember[]
   tasks     Task[]
   schedules Schedule[]
+}
+
+// Who can see and touch a project. Every access check goes through this,
+// including the owner's — they get an 'admin' row when the project is
+// created, so there's one code path rather than "owner OR member".
+model ProjectMember {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // 'viewer' reads, 'member' also writes tasks/schedules, 'admin' also edits
+  // the project and manages members.
+  role      String   @default("member")
+  createdAt DateTime @default(now())
+
+  @@unique([projectId, userId])
+  @@index([userId])
 }
 
 model Task {

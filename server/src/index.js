@@ -6,11 +6,13 @@ import { requireAuth } from './middleware/auth.js'
 import authRouter from './routes/auth.js'
 import avatarRouter from './routes/avatar.js'
 import meRouter from './routes/me.js'
+import myTasksRouter from './routes/myTasks.js'
 import oidcRouter from './routes/oidc.js'
 import projectsRouter from './routes/projects.js'
 import publicProfileRouter from './routes/publicProfile.js'
 import schedulesRouter from './routes/schedules.js'
 import tasksRouter from './routes/tasks.js'
+import usersRouter from './routes/users.js'
 
 const app = express()
 
@@ -27,6 +29,10 @@ app.use('/api/avatar', avatarRouter)
 // Public — same reasoning as /api/avatar, but for the display name.
 app.use('/api/public-profile', publicProfileRouter)
 app.use('/api/me', requireAuth, meRouter)
+app.use('/api/users', requireAuth, usersRouter)
+// Cross-project view of the caller's own tasks, grouped by project. Mounted
+// before the nested task routes since it isn't scoped to one project.
+app.use('/api/my-tasks', requireAuth, myTasksRouter)
 app.use('/api/projects/:projectId/tasks', requireAuth, tasksRouter)
 app.use('/api/projects', requireAuth, projectsRouter)
 app.use('/api/schedules', requireAuth, schedulesRouter)
