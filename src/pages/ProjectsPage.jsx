@@ -1,8 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { apiFetch } from '../lib/api'
-import ProjectMembers from '../components/ProjectMembers'
-
-const ROLE_LABELS = { admin: '관리자', member: '멤버', viewer: '뷰어' }
+import ProjectMembers, { membersDiff, roleLabel } from '../components/ProjectMembers'
 
 function NewProjectForm({ onCreated }) {
   const [open, setOpen] = useState(false)
@@ -96,8 +94,87 @@ function ProjectCard({ project, onChanged, onDeleted }) {
   const [description, setDescription] = useState(project.description || '')
   const [error, setError] = useState('')
 
+  // Member edits are held here until saved, so the panel can offer one
+  // 저장 for the whole batch instead of firing a request per click.
+  const savedMembers = project.members || []
+  const [draftMembers, setDraftMembers] = useState(savedMembers)
+  const [savingMembers, setSavingMembers] = useState(false)
+  const [memberError, setMemberError] = useState('')
+
   const isAdmin = project.myRole === 'admin'
   const canDelete = isAdmin && project.isOwner
+
+  const diff = useMemo(
+    () => membersDiff(savedMembers, draftMembers),
+    [savedMembers, draftMembers],
+  )
+
+  // Marks each row with what will happen to it on save, so the pending state
+  // is visible on the row itself and not just in the button.
+  const pending = useMemo(() => {
+    const map = new Map()
+    const byId = new Map(savedMembers.map((m) => [m.id, m.userId]))
+    diff.added.forEach((m) => map.set(m.userId, '추가 예정'))
+    diff.changed.forEach((m) => map.set(byId.get(m.id), '역할 변경'))
+    return map
+  }, [diff, savedMembers])
+
+  const openMembers = () => {
+    setDraftMembers(savedMembers)
+    setMemberError('')
+    setExpanded(true)
+  }
+
+  // Reverts the edits but keeps the panel open — closing is the separate
+  // 닫기 button up in the project's own row.
+  const discardMembers = () => {
+    setDraftMembers(savedMembers)
+    setMemberError('')
+  }
+
+  const closeMembers = () => {
+    if (diff.count > 0 && !window.confirm('저장하지 않은 멤버 변경이 있습니다. 닫을까요?')) {
+      return
+    }
+    setDraftMembers(savedMembers)
+    setMemberError('')
+    setExpanded(false)
+  }
+
+  const saveMembers = async () => {
+    setSavingMembers(true)
+    try {
+      for (const m of diff.removed) {
+        await apiFetch(`/api/projects/${project.id}/members/${m.id}`, { method: 'DELETE' })
+      }
+      for (const m of diff.changed) {
+        await apiFetch(`/api/projects/${project.id}/members/${m.id}`, {
+          method: 'PATCH',
+          body: { role: m.role },
+        })
+      }
+      for (const m of diff.added) {
+        await apiFetch(`/api/projects/${project.id}/members`, {
+          method: 'POST',
+          body: { userId: m.userId, role: m.role },
+        })
+      }
+      setMemberError('')
+    } catch (err) {
+      setMemberError(err.message)
+    } finally {
+      // Re-read either way: on failure some of the batch may already have
+      // applied, and the draft must not keep showing changes that landed.
+      try {
+        const fresh = await apiFetch(`/api/projects/${project.id}/members`)
+        setDraftMembers(fresh)
+        onChanged({ ...project, members: fresh })
+      } catch {
+        // leave the draft as-is; the error above already explains the failure
+      }
+      setSavingMembers(false)
+    }
+  }
 
   const save = async () => {
     try {
@@ -172,7 +249,7 @@ function ProjectCard({ project, onChanged, onDeleted }) {
                 {project.name}
               </h3>
               <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600 dark:bg-gray-700 dark:text-gray-300">
-                {ROLE_LABELS[project.myRole] || project.myRole}
+                {roleLabel(project.myRole)}
               </span>
             </div>
             {project.description && (
@@ -185,7 +262,7 @@ function ProjectCard({ project, onChanged, onDeleted }) {
           <div className="flex shrink-0 gap-2">
             <button
               type="button"
-              onClick={() => setExpanded((value) => !value)}
+              onClick={expanded ? closeMembers : openMembers}
               className="text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"
             >
               {expanded ? '닫기' : '멤버'}
@@ -216,9 +293,16 @@ function ProjectCard({ project, onChanged, onDeleted }) {
 
       {expanded && (
         <ProjectMembers
-          project={project}
+          members={draftMembers}
+          ownerId={project.ownerId}
           canManage={isAdmin}
-          onMembersChanged={(members) => onChanged({ ...project, members })}
+          pending={pending}
+          diff={diff}
+          saving={savingMembers}
+          error={memberError}
+          onChange={setDraftMembers}
+          onSave={saveMembers}
+          onDiscard={discardMembers}
         />
       )}
     </li>
