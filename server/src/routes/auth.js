@@ -51,6 +51,12 @@ router.post('/login', async (req, res) => {
     httpOnly: true,
     secure: (process.env.FRONTEND_ORIGIN || '').startsWith('https://'),
     sameSite: 'lax',
+    // Explicit — without this, the browser's default path would be scoped
+    // to /api/auth (the directory of this request), so it wouldn't be sent
+    // on a plain navigation to /oidc/authorize (e.g. from BookStack's
+    // auto-initiate redirect), breaking the whole "already logged in, skip
+    // the login screen entirely" flow.
+    path: '/',
     maxAge: 7 * 24 * 60 * 60 * 1000,
   })
 
