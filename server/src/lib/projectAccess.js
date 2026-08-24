@@ -38,7 +38,10 @@ export function requireProjectRole(minRole) {
     const projectId = req.params.projectId || req.params.id
     const access = await getProjectAccess(projectId, req.user)
     if (!access) return res.status(404).json({ error: 'Not found' })
-    if (RANK[access.role] < RANK[minRole]) {
+    // An unrecognised role ranks as 0, i.e. no access. Without the fallback
+    // it would be `undefined < n`, which is false, so a stale or misspelled
+    // role string would sail through every check including pm-only ones.
+    if ((RANK[access.role] ?? 0) < RANK[minRole]) {
       return res.status(403).json({ error: 'Forbidden' })
     }
     req.projectAccess = access
