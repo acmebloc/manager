@@ -26,7 +26,9 @@ function NewProjectForm({ onCreated }) {
     setError('')
   }
 
-  const addMember = (user) => setMembers((current) => [...current, { userId: user.id, user, role: 'pm' }])
+  // Added as a plain member; PM/PL are picked afterward from the row's own
+  // dropdown. Most people on a project are members, so that's the default.
+  const addMember = (user) => setMembers((current) => [...current, { userId: user.id, user, role: 'member' }])
   const removeMember = (userId) => setMembers((current) => current.filter((m) => m.userId !== userId))
   const setMemberRole = (userId, role) =>
     setMembers((current) => current.map((m) => (m.userId === userId ? { ...m, role } : m)))
