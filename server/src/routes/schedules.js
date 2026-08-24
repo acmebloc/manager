@@ -33,8 +33,19 @@ async function memberProjectIds(userId) {
 
 router.get('/', async (req, res) => {
   const { projectId } = req.query
-  const projectIds = await memberProjectIds(req.user.id)
 
+  // The site admin sees every project's schedules, not just ones they
+  // belong to — same site-wide reach as the project list.
+  if (req.user.isSiteAdmin) {
+    const schedules = await prisma.schedule.findMany({
+      where: { ...(projectId && { projectId }) },
+      orderBy: { startAt: 'asc' },
+      include: scheduleInclude,
+    })
+    return res.json(schedules.map(decryptSchedule))
+  }
+
+  const projectIds = await memberProjectIds(req.user.id)
   if (projectId && !projectIds.includes(projectId)) {
     return res.status(404).json({ error: 'Project not found' })
   }
@@ -56,12 +67,12 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'title and startAt are required' })
   }
 
-  // Attaching a schedule to a project shares it with that project's members,
-  // so the caller has to be one of them.
+  // Attaching a schedule to a project shares it with that project's
+  // members, so the caller has to be one of them. Every project role can
+  // do this now — there's no read-only tier within a project anymore.
   if (projectId) {
-    const access = await getProjectAccess(projectId, req.user.id)
+    const access = await getProjectAccess(projectId, req.user)
     if (!access) return res.status(404).json({ error: 'Project not found' })
-    if (access.role === 'viewer') return res.status(403).json({ error: 'Forbidden' })
   }
 
   const schedule = await prisma.schedule.create({
@@ -78,18 +89,18 @@ router.post('/', async (req, res) => {
 })
 
 // Editing and deleting stay with the person who created the schedule, even
-// when others can see it through a shared project.
+// when others can see it through a shared project — except the site admin,
+// who has full authority over every schedule.
 router.patch('/:id', async (req, res) => {
   const existing = await prisma.schedule.findFirst({
-    where: { id: req.params.id, ownerId: req.user.id },
+    where: { id: req.params.id, ...(req.user.isSiteAdmin ? {} : { ownerId: req.user.id }) },
   })
   if (!existing) return res.status(404).json({ error: 'Not found' })
 
   const { title, startAt, endAt, projectId } = req.body
   if (projectId) {
-    const access = await getProjectAccess(projectId, req.user.id)
+    const access = await getProjectAccess(projectId, req.user)
     if (!access) return res.status(404).json({ error: 'Project not found' })
-    if (access.role === 'viewer') return res.status(403).json({ error: 'Forbidden' })
   }
 
   const schedule = await prisma.schedule.update({
@@ -107,7 +118,7 @@ router.patch('/:id', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
   const existing = await prisma.schedule.findFirst({
-    where: { id: req.params.id, ownerId: req.user.id },
+    where: { id: req.params.id, ...(req.user.isSiteAdmin ? {} : { ownerId: req.user.id }) },
   })
   if (!existing) return res.status(404).json({ error: 'Not found' })
   await prisma.schedule.delete({ where: { id: req.params.id } })

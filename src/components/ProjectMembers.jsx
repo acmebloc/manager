@@ -1,10 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { apiFetch } from '../lib/api'
 
+// 'member' works tasks/schedules like everyone else; 'pl' can also invite
+// and remove members (always as plain 'member'); 'pm' can also edit/delete
+// the project and set anyone's role. A project must always keep at least
+// one 'pm' — the UI disables the controls that would drop the last one, the
+// server rejects it either way.
 export const ROLES = [
-  { value: 'admin', label: '관리자' },
+  { value: 'pm', label: 'PM' },
+  { value: 'pl', label: 'PL' },
   { value: 'member', label: '멤버' },
-  { value: 'viewer', label: '뷰어' },
 ]
 
 export function roleLabel(role) {
@@ -40,7 +45,7 @@ export function membersDiff(original, draft) {
   }
 }
 
-function Avatar({ user }) {
+export function Avatar({ user }) {
   if (user?.picture) {
     return (
       <img
@@ -58,14 +63,14 @@ function Avatar({ user }) {
   )
 }
 
-function AddMember({ members, onAdd }) {
+// Shared search-as-you-type user picker, used here and by the new-project
+// form. The directory is filtered server-side; debounce so typing doesn't
+// fire a request per keystroke.
+export function UserSearch({ excludeUserIds, onPick, placeholder = '이름 또는 이메일로 검색' }) {
   const [query, setQuery] = useState('')
   const [candidates, setCandidates] = useState([])
-  const [role, setRole] = useState('member')
   const debounceRef = useRef(null)
 
-  // The directory is filtered server-side; debounce so typing doesn't fire a
-  // request per keystroke.
   useEffect(() => {
     if (!query.trim()) {
       setCandidates([])
@@ -75,38 +80,23 @@ function AddMember({ members, onAdd }) {
     debounceRef.current = setTimeout(async () => {
       try {
         const users = await apiFetch(`/api/users?q=${encodeURIComponent(query.trim())}`)
-        const existing = new Set(members.map((m) => m.userId))
-        setCandidates(users.filter((u) => !existing.has(u.id)).slice(0, 5))
+        setCandidates(users.filter((u) => !excludeUserIds.has(u.id)).slice(0, 5))
       } catch {
         setCandidates([])
       }
     }, 250)
     return () => clearTimeout(debounceRef.current)
-  }, [query, members])
+  }, [query, excludeUserIds])
 
   return (
-    <div className="mt-3 border-t border-gray-100 pt-3 dark:border-gray-700">
-      <div className="flex gap-2">
-        <input
-          type="text"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="이름 또는 이메일로 검색"
-          className="flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-        />
-        <select
-          value={role}
-          onChange={(event) => setRole(event.target.value)}
-          className="rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-        >
-          {ROLES.map((r) => (
-            <option key={r.value} value={r.value}>
-              {r.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
+    <div>
+      <input
+        type="text"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder={placeholder}
+        className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+      />
       {candidates.length > 0 && (
         <ul className="mt-2 flex flex-col gap-1">
           {candidates.map((user) => (
@@ -114,7 +104,7 @@ function AddMember({ members, onAdd }) {
               <button
                 type="button"
                 onClick={() => {
-                  onAdd(user, role)
+                  onPick(user)
                   setQuery('')
                   setCandidates([])
                 }}
@@ -138,6 +128,39 @@ function AddMember({ members, onAdd }) {
   )
 }
 
+// A PM can invite at any level; a PL can only bring people in as plain
+// members — assigning pm/pl is a 'grade' action reserved for PMs.
+function AddMember({ members, canAssignRoles, onAdd }) {
+  const [role, setRole] = useState('member')
+  const existing = new Set(members.map((m) => m.userId))
+
+  return (
+    <div className="mt-3 flex flex-col gap-2 border-t border-gray-100 pt-3 dark:border-gray-700">
+      <div className="flex gap-2">
+        <div className="flex-1">
+          <UserSearch excludeUserIds={existing} onPick={(user) => onAdd(user, role)} />
+        </div>
+        {canAssignRoles && (
+          <select
+            value={role}
+            onChange={(event) => setRole(event.target.value)}
+            className="h-fit rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+          >
+            {ROLES.map((r) => (
+              <option key={r.value} value={r.value}>
+                {r.label}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+      {!canAssignRoles && (
+        <p className="text-xs text-gray-400 dark:text-gray-500">PL은 멤버 등급으로만 초대할 수 있어요</p>
+      )}
+    </div>
+  )
+}
+
 function summarize(diff) {
   const parts = []
   if (diff.added.length) parts.push(`추가 ${diff.added.length}`)
@@ -154,8 +177,7 @@ function summarize(diff) {
 // project itself.
 function ProjectMembers({
   members,
-  ownerId,
-  canManage,
+  myRole,
   pending,
   diff,
   saving,
@@ -164,8 +186,11 @@ function ProjectMembers({
   onSave,
   onDiscard,
 }) {
-  const add = (user, role) =>
-    onChange([...members, { userId: user.id, role, user, isNew: true }])
+  const canInviteOrRemove = myRole === 'pm' || myRole === 'pl'
+  const canAssignRoles = myRole === 'pm'
+  const pmCount = members.filter((m) => m.role === 'pm').length
+
+  const add = (user, role) => onChange([...members, { userId: user.id, role, user, isNew: true }])
 
   const removeMember = (member) => onChange(members.filter((m) => m.userId !== member.userId))
 
@@ -204,16 +229,23 @@ function ProjectMembers({
 
       <ul className="flex flex-col gap-2">
         {members.map((member) => {
-          const isOwner = member.userId === ownerId
           const state = pending.get(member.userId)
+          // The last remaining PM can't be demoted or removed from here —
+          // saving that change would fail server-side anyway, so the
+          // controls are disabled instead of letting the user hit an error.
+          const isLastPm = member.role === 'pm' && pmCount === 1
+          const canEditThisRow = canInviteOrRemove && !isLastPm
+
           return (
             <li key={member.userId} className="flex items-center gap-2">
               <Avatar user={member.user} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm text-gray-900 dark:text-white">
                   {member.user?.name}
-                  {isOwner && (
-                    <span className="ml-1.5 text-xs text-gray-400 dark:text-gray-500">소유자</span>
+                  {isLastPm && (
+                    <span className="ml-1.5 text-xs text-gray-400 dark:text-gray-500">
+                      유일한 PM
+                    </span>
                   )}
                   {state && (
                     <span className="ml-1.5 text-xs text-amber-600 dark:text-amber-400">
@@ -226,19 +258,25 @@ function ProjectMembers({
                 </span>
               </span>
 
-              {canManage && !isOwner ? (
+              {canEditThisRow ? (
                 <>
-                  <select
-                    value={member.role}
-                    onChange={(event) => setRole(member, event.target.value)}
-                    className="rounded-md border border-gray-300 px-2 py-1 text-xs dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-                  >
-                    {ROLES.map((r) => (
-                      <option key={r.value} value={r.value}>
-                        {r.label}
-                      </option>
-                    ))}
-                  </select>
+                  {canAssignRoles ? (
+                    <select
+                      value={member.role}
+                      onChange={(event) => setRole(member, event.target.value)}
+                      className="rounded-md border border-gray-300 px-2 py-1 text-xs dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+                    >
+                      {ROLES.map((r) => (
+                        <option key={r.value} value={r.value}>
+                          {r.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      {roleLabel(member.role)}
+                    </span>
+                  )}
                   <button
                     type="button"
                     onClick={() => removeMember(member)}
@@ -257,7 +295,9 @@ function ProjectMembers({
         })}
       </ul>
 
-      {canManage && <AddMember members={members} onAdd={add} />}
+      {canInviteOrRemove && (
+        <AddMember members={members} canAssignRoles={canAssignRoles} onAdd={add} />
+      )}
     </div>
   )
 }

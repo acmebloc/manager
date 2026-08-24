@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
-import { isValidRole, requireProjectRole } from '../lib/projectAccess.js'
+import { assertNotLastPm, isValidRole, requireProjectRole } from '../lib/projectAccess.js'
 
 const router = Router()
 
@@ -16,11 +16,16 @@ function decryptMember(member) {
   return { ...member, user: decryptUser(member.user) }
 }
 
-// Only projects the caller belongs to. Membership covers the owner too, so
-// there's no separate "or I own it" branch.
+function myRoleFor(project, user) {
+  if (user.isSiteAdmin) return 'pm'
+  return project.members.find((m) => m.userId === user.id)?.role ?? null
+}
+
+// The site admin sees every project site-wide; everyone else only sees
+// projects they're a member of.
 router.get('/', async (req, res) => {
   const projects = await prisma.project.findMany({
-    where: { members: { some: { userId: req.user.id } } },
+    where: req.user.isSiteAdmin ? {} : { members: { some: { userId: req.user.id } } },
     orderBy: { createdAt: 'desc' },
     include: {
       members: { select: memberSelect },
@@ -31,25 +36,43 @@ router.get('/', async (req, res) => {
     projects.map((project) => ({
       ...project,
       members: project.members.map(decryptMember),
-      myRole: project.members.find((m) => m.userId === req.user.id)?.role,
-      isOwner: project.ownerId === req.user.id,
+      myRole: myRoleFor(project, req.user),
     })),
   )
 })
 
-// Creating a project also enrolls the creator as an admin member, in one
-// transaction — a project with no members would be invisible to everyone,
-// including the person who just made it.
+// Any signed-in user can create a project, but creating it doesn't make you
+// a member of it — the creator is only tracked for audit purposes (ownerId).
+// A project needs at least one PM to be usable at all, so that's required
+// up front rather than left to a follow-up step.
 router.post('/', async (req, res) => {
-  const { name, description } = req.body
+  const { name, description, startAt, endAt, members = [] } = req.body
   if (!name) return res.status(400).json({ error: 'name is required' })
+
+  if (!Array.isArray(members) || members.some((m) => !m?.userId || !isValidRole(m.role))) {
+    return res.status(400).json({ error: 'members must be [{ userId, role }]' })
+  }
+  const userIds = members.map((m) => m.userId)
+  if (new Set(userIds).size !== userIds.length) {
+    return res.status(400).json({ error: 'Duplicate member userId' })
+  }
+  if (!members.some((m) => m.role === 'pm')) {
+    return res.status(400).json({ error: 'At least one PM is required' })
+  }
+
+  const existingCount = await prisma.user.count({ where: { id: { in: userIds } } })
+  if (existingCount !== userIds.length) {
+    return res.status(400).json({ error: 'One or more members are not registered users' })
+  }
 
   const project = await prisma.project.create({
     data: {
       name,
       description,
+      startAt: startAt ? new Date(startAt) : null,
+      endAt: endAt ? new Date(endAt) : null,
       ownerId: req.user.id,
-      members: { create: { userId: req.user.id, role: 'admin' } },
+      members: { create: members.map((m) => ({ userId: m.userId, role: m.role })) },
     },
     include: { members: { select: memberSelect } },
   })
@@ -57,12 +80,11 @@ router.post('/', async (req, res) => {
   res.status(201).json({
     ...project,
     members: project.members.map(decryptMember),
-    myRole: 'admin',
-    isOwner: true,
+    myRole: myRoleFor(project, req.user),
   })
 })
 
-router.get('/:id', requireProjectRole('viewer'), async (req, res) => {
+router.get('/:id', requireProjectRole('member'), async (req, res) => {
   const project = await prisma.project.findUnique({
     where: { id: req.params.id },
     include: {
@@ -74,17 +96,18 @@ router.get('/:id', requireProjectRole('viewer'), async (req, res) => {
     ...project,
     members: project.members.map(decryptMember),
     myRole: req.projectAccess.role,
-    isOwner: req.projectAccess.isOwner,
   })
 })
 
-router.patch('/:id', requireProjectRole('admin'), async (req, res) => {
-  const { name, description } = req.body
+router.patch('/:id', requireProjectRole('pm'), async (req, res) => {
+  const { name, description, startAt, endAt } = req.body
   const project = await prisma.project.update({
     where: { id: req.params.id },
     data: {
       ...(name !== undefined && { name }),
       ...(description !== undefined && { description }),
+      ...(startAt !== undefined && { startAt: startAt ? new Date(startAt) : null }),
+      ...(endAt !== undefined && { endAt: endAt ? new Date(endAt) : null }),
     },
     include: { members: { select: memberSelect } },
   })
@@ -92,23 +115,17 @@ router.patch('/:id', requireProjectRole('admin'), async (req, res) => {
     ...project,
     members: project.members.map(decryptMember),
     myRole: req.projectAccess.role,
-    isOwner: req.projectAccess.isOwner,
   })
 })
 
-// Deleting takes the whole project's contents with it, so it stays with the
-// owner rather than any admin.
-router.delete('/:id', requireProjectRole('admin'), async (req, res) => {
-  if (!req.projectAccess.isOwner) {
-    return res.status(403).json({ error: 'Only the project owner can delete it' })
-  }
+router.delete('/:id', requireProjectRole('pm'), async (req, res) => {
   await prisma.project.delete({ where: { id: req.params.id } })
   res.status(204).end()
 })
 
 // --- members ---
 
-router.get('/:id/members', requireProjectRole('viewer'), async (req, res) => {
+router.get('/:id/members', requireProjectRole('member'), async (req, res) => {
   const members = await prisma.projectMember.findMany({
     where: { projectId: req.params.id },
     select: memberSelect,
@@ -117,10 +134,16 @@ router.get('/:id/members', requireProjectRole('viewer'), async (req, res) => {
   res.json(members.map(decryptMember))
 })
 
-router.post('/:id/members', requireProjectRole('admin'), async (req, res) => {
+router.post('/:id/members', requireProjectRole('pl'), async (req, res) => {
   const { userId, role = 'member' } = req.body
   if (!userId) return res.status(400).json({ error: 'userId is required' })
   if (!isValidRole(role)) return res.status(400).json({ error: 'Invalid role' })
+
+  // Assigning pm/pl ("등급 부여") is a PM-only power — a PL can only invite
+  // people in as plain members.
+  if (req.projectAccess.role === 'pl' && role !== 'member') {
+    return res.status(403).json({ error: 'PL은 멤버 등급으로만 초대할 수 있습니다' })
+  }
 
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } })
   if (!user) return res.status(404).json({ error: 'User not found' })
@@ -137,7 +160,7 @@ router.post('/:id/members', requireProjectRole('admin'), async (req, res) => {
   res.status(201).json(decryptMember(member))
 })
 
-router.patch('/:id/members/:memberId', requireProjectRole('admin'), async (req, res) => {
+router.patch('/:id/members/:memberId', requireProjectRole('pm'), async (req, res) => {
   const { role } = req.body
   if (!isValidRole(role)) return res.status(400).json({ error: 'Invalid role' })
 
@@ -145,8 +168,10 @@ router.patch('/:id/members/:memberId', requireProjectRole('admin'), async (req, 
     where: { id: req.params.memberId, projectId: req.params.id },
   })
   if (!member) return res.status(404).json({ error: 'Not found' })
-  if (member.userId === req.projectAccess.project.ownerId) {
-    return res.status(403).json({ error: "The owner's role cannot be changed" })
+
+  if (role !== 'pm') {
+    const problem = await assertNotLastPm(req.params.id, member, req.projectAccess.viaSiteAdmin)
+    if (problem) return res.status(400).json({ error: problem })
   }
 
   const updated = await prisma.projectMember.update({
@@ -157,14 +182,14 @@ router.patch('/:id/members/:memberId', requireProjectRole('admin'), async (req, 
   res.json(decryptMember(updated))
 })
 
-router.delete('/:id/members/:memberId', requireProjectRole('admin'), async (req, res) => {
+router.delete('/:id/members/:memberId', requireProjectRole('pl'), async (req, res) => {
   const member = await prisma.projectMember.findFirst({
     where: { id: req.params.memberId, projectId: req.params.id },
   })
   if (!member) return res.status(404).json({ error: 'Not found' })
-  if (member.userId === req.projectAccess.project.ownerId) {
-    return res.status(403).json({ error: 'The owner cannot be removed' })
-  }
+
+  const problem = await assertNotLastPm(req.params.id, member, req.projectAccess.viaSiteAdmin)
+  if (problem) return res.status(400).json({ error: problem })
 
   await prisma.projectMember.delete({ where: { id: req.params.memberId } })
   res.status(204).end()

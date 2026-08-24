@@ -13,6 +13,11 @@ model User {
   email     String
   name      String
   picture   String?
+  // Full CRUD on every project/task/schedule site-wide, member or not.
+  // Exactly one row may have this set — enforced by a partial unique index
+  // added by hand in this field's migration, not expressible in this schema
+  // language. Set directly in the DB; there's no UI for it.
+  isSiteAdmin Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -24,32 +29,34 @@ model User {
 }
 
 model Project {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   name        String
   description String?
-  // Whoever created it. Kept alongside the membership rows because the owner
-  // is the one member who can't be removed or demoted by another admin.
+  startAt     DateTime?
+  endAt       DateTime?
+  // Audit only — who clicked "create". Carries no authority: the creator
+  // isn't a member unless explicitly added to `members`, same as anyone else.
   ownerId     String
-  owner       User     @relation("ProjectOwner", fields: [ownerId], references: [id])
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  owner       User      @relation("ProjectOwner", fields: [ownerId], references: [id])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   members   ProjectMember[]
   tasks     Task[]
   schedules Schedule[]
 }
 
-// Who can see and touch a project. Every access check goes through this,
-// including the owner's — they get an 'admin' row when the project is
-// created, so there's one code path rather than "owner OR member".
+// Who can see and touch a project, and how much. A project must always keep
+// at least one 'pm' — enforced in code (projectAccess.js), not here.
 model ProjectMember {
   id        String   @id @default(cuid())
   projectId String
   project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  // 'viewer' reads, 'member' also writes tasks/schedules, 'admin' also edits
-  // the project and manages members.
+  // 'member' works tasks/schedules like everyone else; 'pl' can also invite
+  // and remove members (always as plain 'member' — assigning pm/pl is a 'pm'
+  // -only power); 'pm' can also edit/delete the project and set anyone's role.
   role      String   @default("member")
   createdAt DateTime @default(now())
 
