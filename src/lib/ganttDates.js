@@ -40,6 +40,14 @@ export function daysBetween(a, b) {
   return Math.round((startOfDay(b) - startOfDay(a)) / MS_PER_DAY)
 }
 
+// A personal schedule can be created without an end date (endAt stays
+// optional there — only a project bar requires one). Treated as a one-day
+// bar for every date/geometry calculation below, without touching the
+// stored value.
+function effectiveEnd(item) {
+  return item.endAt || item.startAt
+}
+
 // Always spans today (padded a couple weeks either side so an empty or
 // just-started project doesn't render a razor-thin chart), and grows to fit
 // whatever items actually exist, with a little breathing room past them.
@@ -49,11 +57,26 @@ export function computeRange(items) {
   let max = addDays(today, 30)
   for (const item of items) {
     const s = startOfDay(item.startAt)
-    const e = startOfDay(item.endAt)
+    const e = startOfDay(effectiveEnd(item))
     if (s < min) min = s
     if (e > max) max = e
   }
   return { start: addDays(min, -3), end: addDays(max, 3) }
+}
+
+// 개인 일정표 전용 — 항상 올해 1/1~12/31을 다 채워서 보여주고, 그 범위를 벗어난
+// 항목이 있으면 그만큼만 넓힌다.
+export function computeYearRange(items, referenceDate = new Date()) {
+  const year = referenceDate.getFullYear()
+  let min = new Date(year, 0, 1)
+  let max = new Date(year, 11, 31)
+  for (const item of items) {
+    const s = startOfDay(item.startAt)
+    const e = startOfDay(effectiveEnd(item))
+    if (s < min) min = s
+    if (e > max) max = e
+  }
+  return { start: min, end: max }
 }
 
 export function totalWidth(range, zoom) {
@@ -69,7 +92,7 @@ export function todayX(range, zoom) {
 export function barGeometry(item, range, zoom) {
   const px = pxPerDayFor(zoom)
   const left = daysBetween(range.start, item.startAt) * px
-  const width = (daysBetween(item.startAt, item.endAt) + 1) * px
+  const width = (daysBetween(item.startAt, effectiveEnd(item)) + 1) * px
   return { left, width }
 }
 
@@ -95,15 +118,22 @@ export function buildTicks(range, zoom) {
 
   if (zoom === 'week') {
     let d = addDays(range.start, -((range.start.getDay() + 6) % 7)) // 월요일 시작
+    // 각 주(월요일 기준)가 속한 달이 바뀔 때마다 "N주차"를 1부터 다시 센다 —
+    // 그 달에 걸친 주가 몇 개든 "8월 1주차, 8월 2주차, ..." 순서로 보이게.
+    let currentMonth = null
+    let weekOfMonth = 0
     while (d <= range.end) {
       const spanStart = d < range.start ? range.start : d
       const weekEnd = addDays(d, 6)
       const spanEnd = weekEnd < range.end ? weekEnd : range.end
+      const month = d.getMonth()
+      weekOfMonth = month === currentMonth ? weekOfMonth + 1 : 1
+      currentMonth = month
       ticks.push({
         key: d.toISOString(),
         x: daysBetween(range.start, spanStart) * px,
         width: (daysBetween(spanStart, spanEnd) + 1) * px,
-        label: `${d.getMonth() + 1}/${d.getDate()} 주`,
+        label: `${month + 1}월 ${weekOfMonth}주차`,
       })
       d = addDays(d, 7)
     }

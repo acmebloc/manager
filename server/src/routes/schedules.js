@@ -33,17 +33,28 @@ async function canModifySchedule(schedule, user) {
   return Boolean(access)
 }
 
-// Followers ("참조자") only make sense among people who can actually see the
-// schedule, same reasoning as assignee-must-be-member for tasks
-// (tasks.js's assertAssigneeIsMember) — so only checked when projectId is set;
-// a personal schedule has no follower-tagging UI at all.
+// Followers ("참조자") on a project schedule only make sense among people who
+// can actually see it, same reasoning as assignee-must-be-member for tasks
+// (tasks.js's assertAssigneeIsMember).
 async function assertFollowersAreMembers(projectId, followerIds) {
-  if (!projectId || !Array.isArray(followerIds) || followerIds.length === 0) return null
+  if (!Array.isArray(followerIds) || followerIds.length === 0) return null
   const members = await prisma.projectMember.findMany({
     where: { projectId, userId: { in: followerIds } },
     select: { userId: true },
   })
   return members.length === followerIds.length ? null : 'Followers must be members of this project'
+}
+
+// A personal schedule has no project to scope followers to — any registered
+// user can be tagged (picked via /api/users search, not a member list) — so
+// this only checks the ids are real.
+async function assertFollowersExist(followerIds) {
+  if (!Array.isArray(followerIds) || followerIds.length === 0) return null
+  const users = await prisma.user.findMany({
+    where: { id: { in: followerIds } },
+    select: { id: true },
+  })
+  return users.length === followerIds.length ? null : 'Followers must be existing users'
 }
 
 async function setFollowers(scheduleId, followerIds) {
@@ -79,17 +90,26 @@ async function memberProjectIds(userId) {
 router.get('/', async (req, res) => {
   const { projectId, personalOnly } = req.query
 
-  // Backs the /schedule page's "개인 일정" section — the caller's own
-  // schedules that aren't tied to any project, regardless of site-admin
-  // status (site admin reach is about seeing *other people's* project
-  // schedules, not everyone's personal ones).
+  // Backs the /schedule page's 개인 일정 chart — schedules the caller owns,
+  // plus ones someone else made and tagged them as a follower on (spec: "참조된
+  // 사람이 있을 경우, 참조자 일정표에도 같은 일정이 등록"). Not scoped to
+  // site-admin status — that reach is about *other people's* project
+  // schedules, not everyone's personal ones. `canModify` tells the client
+  // whether this is a personal schedule of mine (fully editable) or one I'm
+  // just following (read-only) — see canModifySchedule for why only the
+  // owner may edit a personal schedule.
   if (personalOnly === 'true') {
     const schedules = await prisma.schedule.findMany({
-      where: { ownerId: req.user.id, projectId: null },
+      where: {
+        projectId: null,
+        OR: [{ ownerId: req.user.id }, { followers: { some: { userId: req.user.id } } }],
+      },
       orderBy: { startAt: 'asc' },
       include: scheduleInclude,
     })
-    return res.json(schedules.map(decryptSchedule))
+    return res.json(
+      schedules.map((s) => ({ ...decryptSchedule(s), canModify: s.ownerId === req.user.id })),
+    )
   }
 
   // The site admin sees every project's schedules, not just ones they
@@ -140,7 +160,9 @@ router.post('/', async (req, res) => {
     const access = await getProjectAccess(projectId, req.user)
     if (!access) return res.status(404).json({ error: 'Project not found' })
   }
-  const followerProblem = await assertFollowersAreMembers(projectId, followerIds)
+  const followerProblem = projectId
+    ? await assertFollowersAreMembers(projectId, followerIds)
+    : await assertFollowersExist(followerIds)
   if (followerProblem) return res.status(400).json({ error: followerProblem })
 
   const schedule = await prisma.schedule.create({
@@ -152,7 +174,7 @@ router.post('/', async (req, res) => {
       ownerId: req.user.id,
     },
   })
-  if (projectId && followerIds.length > 0) await setFollowers(schedule.id, followerIds)
+  if (followerIds.length > 0) await setFollowers(schedule.id, followerIds)
 
   const withIncludes = await prisma.schedule.findUnique({ where: { id: schedule.id }, include: scheduleInclude })
   res.status(201).json(decryptSchedule(withIncludes))
@@ -186,7 +208,9 @@ router.patch('/:id', async (req, res) => {
     if (!access) return res.status(404).json({ error: 'Project not found' })
   }
   if (followerIds !== undefined) {
-    const followerProblem = await assertFollowersAreMembers(nextProjectId, followerIds)
+    const followerProblem = nextProjectId
+      ? await assertFollowersAreMembers(nextProjectId, followerIds)
+      : await assertFollowersExist(followerIds)
     if (followerProblem) return res.status(400).json({ error: followerProblem })
   }
 
@@ -199,7 +223,7 @@ router.patch('/:id', async (req, res) => {
       ...(projectId !== undefined && { projectId: projectId || null }),
     },
   })
-  if (followerIds !== undefined) await setFollowers(req.params.id, nextProjectId ? followerIds : [])
+  if (followerIds !== undefined) await setFollowers(req.params.id, followerIds)
 
   const schedule = await prisma.schedule.findUnique({ where: { id: req.params.id }, include: scheduleInclude })
   res.json(decryptSchedule(schedule))

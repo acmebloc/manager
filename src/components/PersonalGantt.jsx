@@ -1,52 +1,46 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { apiFetch } from '../lib/api'
-import { computeRange } from '../lib/ganttDates'
+import { computeYearRange } from '../lib/ganttDates'
 import GanttChart from './GanttChart'
 import ScheduleItemDialog from './ScheduleItemDialog'
 
-// 일감에서 가져온 행(인디고)과 별도로 등록한 "기타" 행(앰버)을 색으로 구분
-// (스펙 요구사항).
+// 내가 만든 일정(인디고)과 남이 만들고 나를 참조자로 태그한 일정(앰버)을
+// 색으로 구분 — 프로젝트 간트차트의 일감/기타 색 구분과 같은 언어.
 const BAR_CLASS = {
-  task: 'bg-indigo-500 hover:bg-indigo-400',
+  mine: 'bg-indigo-500 hover:bg-indigo-400',
   other: 'bg-amber-500 hover:bg-amber-400',
 }
 
 const LEGEND = [
-  { key: 'task', label: '일감', className: 'bg-indigo-500' },
-  { key: 'other', label: '기타', className: 'bg-amber-500' },
+  { key: 'mine', label: '내 일정', className: 'bg-indigo-500' },
+  { key: 'other', label: '참조된 일정', className: 'bg-amber-500' },
 ]
 
-// 프로젝트 하나의 간트차트. 일감 행은 Task 테이블에서 직접 계산해 보여주므로
-// 별도 저장이 없고, 날짜를 고치면 바로 해당 일감이 갱신된다.
-function ProjectGantt({ projectId }) {
+// 프로젝트에 속하지 않는 개인 일정표 — 프로젝트 간트차트(ProjectGantt)와
+// 같은 GanttChart를 쓰되, 표시 범위는 항상 올해 1/1~12/31이고 항목은
+// 내가 만든 일정 + 참조자로 등록된(남이 만든) 일정을 합친 것이다.
+function PersonalGantt() {
   const [items, setItems] = useState([])
-  const [members, setMembers] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [dialogTarget, setDialogTarget] = useState(null) // null=닫힘, 'new'=생성, item=수정
 
   const load = useCallback(async () => {
     try {
-      const [scheduleItems, projectMembers] = await Promise.all([
-        apiFetch(`/api/projects/${projectId}/schedule`),
-        apiFetch(`/api/projects/${projectId}/members`),
-      ])
-      setItems(scheduleItems)
-      setMembers(projectMembers.map((m) => m.user))
+      const data = await apiFetch('/api/schedules?personalOnly=true')
+      setItems(data)
     } catch (err) {
       setError(err.message)
     } finally {
       setLoading(false)
     }
-  }, [projectId])
+  }, [])
 
   useEffect(() => {
-    setLoading(true)
-    setError('')
     load()
   }, [load])
 
-  const range = useMemo(() => computeRange(items), [items])
+  const range = useMemo(() => computeYearRange(items), [items])
 
   const onDialogDone = () => {
     setDialogTarget(null)
@@ -63,17 +57,16 @@ function ProjectGantt({ projectId }) {
         items={items}
         range={range}
         legend={LEGEND}
-        barClassFor={(item) => BAR_CLASS[item.source]}
+        barClassFor={(item) => BAR_CLASS[item.canModify ? 'mine' : 'other']}
         onBarClick={(item) => setDialogTarget(item)}
         onNewClick={() => setDialogTarget('new')}
-        emptyMessage="표시할 일정이 없습니다. 일감에 시작/종료일을 등록하거나 새 일정을 추가해 보세요."
+        emptyMessage="등록된 개인 일정이 없습니다. 새 일정을 추가해 보세요."
       />
 
       {dialogTarget && (
         <ScheduleItemDialog
-          projectId={projectId}
+          projectId={null}
           item={dialogTarget === 'new' ? null : dialogTarget}
-          members={members}
           onClose={() => setDialogTarget(null)}
           onDone={onDialogDone}
         />
@@ -82,4 +75,4 @@ function ProjectGantt({ projectId }) {
   )
 }
 
-export default ProjectGantt
+export default PersonalGantt
