@@ -17,17 +17,24 @@ function FollowerPicker({ members, followers, onChange }) {
   const [remoteCandidates, setRemoteCandidates] = useState([])
   const debounceRef = useRef(null)
   const followerIds = new Set(followers.map((f) => f.id))
+  // 입력창 placeholder가 "@로 검색"이라 사용자가 실제로 '@'를 타이핑하는데,
+  // 그 '@'는 트리거일 뿐 검색어의 일부가 아니다(일감 댓글 멘션에서 typeahead
+  // 플러그인이 트리거 문자를 떼고 넘겨주는 것과 같은 의미) — 이걸 그대로
+  // matchesKoreanQuery/서버 검색에 넘기면 이름엔 '@'가 없어 로컬 검색은
+  // 전부 걸러지고, 이메일엔 '@'가 다 들어있어 서버 검색은 반대로 전원이
+  // 걸리는(우연히 맞는 것처럼 보이는) 문제가 있어 여기서 떼고 시작한다.
+  const term = query.trim().replace(/^@/, '').trim()
 
   useEffect(() => {
     if (members) return undefined // 로컬 검색이라 서버 호출 불필요
-    if (!query.trim()) {
+    if (!term) {
       setRemoteCandidates([])
       return undefined
     }
     clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(async () => {
       try {
-        const users = await apiFetch(`/api/users?q=${encodeURIComponent(query.trim())}`)
+        const users = await apiFetch(`/api/users?q=${encodeURIComponent(term)}`)
         setRemoteCandidates(users.filter((u) => !followerIds.has(u.id)).slice(0, 6))
       } catch {
         setRemoteCandidates([])
@@ -35,12 +42,12 @@ function FollowerPicker({ members, followers, onChange }) {
     }, 250)
     return () => clearTimeout(debounceRef.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, members])
+  }, [term, members])
 
   const candidates = members
-    ? query.trim() === ''
+    ? term === ''
       ? []
-      : members.filter((m) => !followerIds.has(m.id) && matchesKoreanQuery(m.name, query)).slice(0, 6)
+      : members.filter((m) => !followerIds.has(m.id) && matchesKoreanQuery(m.name, term)).slice(0, 6)
     : remoteCandidates
 
   const add = (user) => {
