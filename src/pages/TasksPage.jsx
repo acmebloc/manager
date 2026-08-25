@@ -19,13 +19,16 @@ function ProjectSection({ section, statusFilter, myTasksOnly }) {
   return (
     <section className="mb-6">
       <div className="mb-2 flex items-center justify-between">
-        <Link
-          to={`/projects/${section.projectId}/board`}
-          className="text-base font-medium text-gray-900 hover:text-indigo-600 dark:text-white dark:hover:text-indigo-400"
-        >
-          {section.projectName}
-        </Link>
-        <span className="text-xs text-gray-400 dark:text-gray-500">일감 {section.tasks.length}개</span>
+        <h3 className="text-base font-medium text-gray-900 dark:text-white">{section.projectName}</h3>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-gray-400 dark:text-gray-500">일감 {section.tasks.length}개</span>
+          <Link
+            to={`/projects/${section.projectId}/board`}
+            className="text-xs font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
+          >
+            칸반 보드 보기 →
+          </Link>
+        </div>
       </div>
 
       {section.tasks.length === 0 ? (
