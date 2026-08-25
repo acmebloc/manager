@@ -11,6 +11,8 @@ import oidcRouter from './routes/oidc.js'
 import projectsRouter from './routes/projects.js'
 import publicProfileRouter from './routes/publicProfile.js'
 import schedulesRouter from './routes/schedules.js'
+import taskAttachmentsRouter from './routes/taskAttachments.js'
+import taskCommentsRouter from './routes/taskComments.js'
 import tasksRouter from './routes/tasks.js'
 import usersRouter from './routes/users.js'
 
@@ -33,6 +35,8 @@ app.use('/api/users', requireAuth, usersRouter)
 // Cross-project view of the caller's own tasks, grouped by project. Mounted
 // before the nested task routes since it isn't scoped to one project.
 app.use('/api/my-tasks', requireAuth, myTasksRouter)
+app.use('/api/projects/:projectId/tasks/:taskId/attachments', requireAuth, taskAttachmentsRouter)
+app.use('/api/projects/:projectId/tasks/:taskId/comments', requireAuth, taskCommentsRouter)
 app.use('/api/projects/:projectId/tasks', requireAuth, tasksRouter)
 app.use('/api/projects', requireAuth, projectsRouter)
 app.use('/api/schedules', requireAuth, schedulesRouter)

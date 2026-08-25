@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
 import { assertNotLastPm, isValidRole, requireProjectRole } from '../lib/projectAccess.js'
+import { deleteAttachmentFiles } from '../lib/uploads.js'
 
 const router = Router()
 
@@ -119,6 +120,14 @@ router.patch('/:id', requireProjectRole('pm'), async (req, res) => {
 })
 
 router.delete('/:id', requireProjectRole('pm'), async (req, res) => {
+  // Cascade deletes the TaskAttachment rows, but not their disk files — clean
+  // those up first (spec §5.4) since the project + its tasks are about to go.
+  const attachments = await prisma.taskAttachment.findMany({
+    where: { task: { projectId: req.params.id } },
+    select: { storageKey: true },
+  })
+  await deleteAttachmentFiles(attachments.map((a) => a.storageKey))
+
   await prisma.project.delete({ where: { id: req.params.id } })
   res.status(204).end()
 })

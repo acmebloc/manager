@@ -21,11 +21,15 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  projects    Project[]       @relation("ProjectOwner")
-  memberships ProjectMember[]
-  tasks       Task[]          @relation("TaskAssignee")
-  schedules   Schedule[]      @relation("ScheduleOwner")
-  oidcCodes   OidcAuthCode[]
+  projects            Project[]            @relation("ProjectOwner")
+  memberships         ProjectMember[]
+  tasks               Task[]               @relation("TaskAssignee")
+  createdTasks        Task[]               @relation("TaskCreatedBy")
+  uploadedAttachments TaskAttachment[]     @relation("TaskAttachmentUploader")
+  taskComments        TaskComment[]        @relation("TaskCommentAuthor")
+  taskCommentMentions TaskCommentMention[] @relation("TaskCommentMentionedUser")
+  schedules           Schedule[]           @relation("ScheduleOwner")
+  oidcCodes           OidcAuthCode[]
 }
 
 model Project {
@@ -70,12 +74,65 @@ model Task {
   project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   title       String
   description String?
-  status      String    @default("todo")
+  type        String    @default("dev")    // plan | dev | design | qa
+  grade       String    @default("minor")  // urgent | major | minor
+  status      String    @default("todo")   // todo | doing | review | done
+  // 등록자. 기존 행은 프로젝트 ownerId로 backfill. null이면 UI에 "등록자 미상"으로
+  // 표시하고, 삭제 권한이 사이트 어드민에게만 남는다.
+  createdById String?
+  createdBy   User?     @relation("TaskCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   assigneeId  String?
   assignee    User?     @relation("TaskAssignee", fields: [assigneeId], references: [id])
-  dueDate     DateTime?
+  startAt     DateTime?
+  endAt       DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+
+  attachments TaskAttachment[]
+  comments    TaskComment[]
+
+  @@index([projectId, status])
+  @@index([assigneeId])
+}
+
+model TaskAttachment {
+  id           String   @id @default(cuid())
+  taskId       String
+  task         Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  fileName     String                     // 사용자에게 보여줄 원본 파일명
+  mimeType     String
+  size         Int
+  storageKey   String   @unique           // 디스크상의 이름. 확장자 없음
+  uploadedById String?
+  uploadedBy   User?    @relation("TaskAttachmentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+
+  @@index([taskId])
+}
+
+model TaskComment {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation("TaskCommentAuthor", fields: [authorId], references: [id])
+  body      String                       // 마크다운 원문, 평문 저장
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  mentions  TaskCommentMention[]
+
+  @@index([taskId])
+}
+
+model TaskCommentMention {
+  id        String      @id @default(cuid())
+  commentId String
+  comment   TaskComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User        @relation("TaskCommentMentionedUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([commentId, userId])
 }
 
 model Schedule {

@@ -1,12 +1,15 @@
 import { Router } from 'express'
 import { prisma } from '../db.js'
+import { decryptUser } from '../lib/fieldCrypto.js'
+import { taskPermissionFlags } from '../lib/taskPermissions.js'
 
 const router = Router()
 
-// Backs the 일감관리 screen: tasks assigned to the caller across every
-// project they belong to, already grouped by project so the UI doesn't have
-// to stitch the two lists together. Projects with nothing assigned are
-// included, so the screen still shows which projects you're on.
+// Backs the 일감관리 screen: every task published to a project the caller
+// belongs to (not just ones assigned to them — "내 일감만 보기" is a
+// client-side toggle instead, see spec §4.1/§9), grouped by project so the
+// UI doesn't have to stitch the two lists together. Projects with no tasks
+// are still included, so the screen shows every project you're on.
 router.get('/', async (req, res) => {
   const projects = await prisma.project.findMany({
     where: { members: { some: { userId: req.user.id } } },
@@ -14,26 +17,44 @@ router.get('/', async (req, res) => {
     select: {
       id: true,
       name: true,
+      members: { select: { userId: true, role: true } },
       tasks: {
-        where: { assigneeId: req.user.id },
-        orderBy: [{ dueDate: { sort: 'asc', nulls: 'last' } }, { createdAt: 'desc' }],
+        orderBy: [{ createdAt: 'desc' }],
         select: {
           id: true,
           title: true,
+          type: true,
+          grade: true,
           status: true,
-          dueDate: true,
+          createdById: true,
+          assigneeId: true,
+          endAt: true,
           createdAt: true,
+          assignee: { select: { id: true, name: true, email: true, picture: true } },
+          _count: { select: { attachments: true, comments: true } },
         },
       },
     },
   })
 
   res.json(
-    projects.map((project) => ({
-      projectId: project.id,
-      projectName: project.name,
-      tasks: project.tasks,
-    })),
+    projects.map((project) => {
+      const memberIds = new Set(project.members.map((m) => m.userId))
+      const myMembership = project.members.find((m) => m.userId === req.user.id)
+      // Same synthetic-'pm' rule as getProjectAccess (projectAccess.js) — the
+      // site admin counts as admin everywhere without needing a real row.
+      const projectAccess = { role: req.user.isSiteAdmin ? 'pm' : myMembership?.role }
+      return {
+        projectId: project.id,
+        projectName: project.name,
+        tasks: project.tasks.map((task) => ({
+          ...task,
+          assignee: task.assignee ? decryptUser(task.assignee) : null,
+          assigneeIsMember: task.assigneeId ? memberIds.has(task.assigneeId) : true,
+          ...taskPermissionFlags(task, req.user, projectAccess),
+        })),
+      }
+    }),
   )
 })
 
