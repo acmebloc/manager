@@ -140,7 +140,7 @@ function GanttChart({
                 {ticks.map((tick) => (
                   <div
                     key={tick.key}
-                    className={`absolute top-0 flex h-8 items-center justify-center border-r border-gray-100 text-gray-500 dark:border-gray-800 dark:text-gray-400 ${
+                    className={`absolute top-0 flex h-8 items-center justify-center overflow-hidden truncate whitespace-nowrap border-r border-gray-100 text-gray-500 dark:border-gray-800 dark:text-gray-400 ${
                       zoom === 'day' ? 'text-[10px]' : 'text-[11px]'
                     } ${tick.isWeekend ? 'bg-gray-50 dark:bg-gray-800/60' : ''}`}
                     style={{ left: tick.x, width: tick.width }}
