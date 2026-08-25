@@ -1,6 +1,13 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
+// @mdxeditor/editor pulls in @lexical/code (for its markdown import/export
+// pipeline, even though we don't use codeBlockPlugin), which depends on
+// prismjs. Prism's own language files assume a global `Prism` set up by its
+// core — imported here, first, so that side effect runs before anything else
+// in the bundle touches it (production build crashed the whole app on load
+// otherwise: "Uncaught ReferenceError: Prism is not defined").
+import 'prismjs'
 import './index.css'
 import '@mdxeditor/editor/style.css'
 import Layout from './components/Layout.jsx'
