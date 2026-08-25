@@ -170,6 +170,29 @@ function TaskFormPage() {
     }
   }
 
+  // Status alone is editable straight from the read view — matching the
+  // kanban board's drag-to-change-status, no need to enter the full edit form.
+  // Guarded against overlapping requests: without it, quickly picking two
+  // statuses in a row could let the first (slower) response land after the
+  // second and silently revert the value the user actually chose.
+  const [statusUpdating, setStatusUpdating] = useState(false)
+  const updateStatus = async (status) => {
+    setStatusUpdating(true)
+    try {
+      const updated = await apiFetch(`/api/projects/${projectId}/tasks/${taskId}`, {
+        method: 'PATCH',
+        body: { status },
+      })
+      setTask(updated)
+      setDraft((d) => ({ ...d, status: updated.status }))
+      setError('')
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setStatusUpdating(false)
+    }
+  }
+
   const remove = async () => {
     if (!window.confirm('일감을 삭제할까요? 첨부파일과 댓글도 함께 삭제됩니다.')) return
     try {
@@ -309,8 +332,11 @@ function TaskFormPage() {
             </p>
           )}
 
-          <label className="text-xs text-gray-500 dark:text-gray-400">
-            본문
+          <div>
+            {/* Not a <label> — it would wrap the editor's own toolbar buttons,
+                and a label's click-forwarding to its first focusable control
+                can steal focus/activate that button on an unrelated click. */}
+            <p className="text-xs text-gray-500 dark:text-gray-400">본문</p>
             <div className="mt-1">
               <MarkdownEditor
                 value={draft.description}
@@ -320,7 +346,7 @@ function TaskFormPage() {
                 placeholder="본문을 입력하세요"
               />
             </div>
-          </label>
+          </div>
 
           {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
           <div className="flex gap-2">
@@ -348,7 +374,14 @@ function TaskFormPage() {
               {task.canModify && (
                 <button
                   type="button"
-                  onClick={() => setEditing(true)}
+                  onClick={() => {
+                    // Re-sync from the latest task — a quick status change
+                    // via the select just below can otherwise land between
+                    // this click and load, and the stale draft would then
+                    // overwrite it back on save.
+                    setDraft(draftFromTask(task))
+                    setEditing(true)
+                  }}
                   className="text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"
                 >
                   수정
@@ -369,9 +402,24 @@ function TaskFormPage() {
             <span className="rounded-full bg-gray-100 px-2 py-0.5 text-gray-600 dark:bg-gray-700 dark:text-gray-300">
               {TASK_GRADES.find((g) => g.value === task.grade)?.label}
             </span>
-            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-gray-600 dark:bg-gray-700 dark:text-gray-300">
-              {TASK_STATUSES.find((s) => s.value === task.status)?.label}
-            </span>
+            {task.canModify ? (
+              <select
+                value={task.status}
+                onChange={(e) => updateStatus(e.target.value)}
+                disabled={statusUpdating}
+                className="rounded-full border border-gray-200 bg-gray-100 px-2 py-0.5 text-gray-600 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300"
+              >
+                {TASK_STATUSES.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+                {TASK_STATUSES.find((s) => s.value === task.status)?.label}
+              </span>
+            )}
           </div>
 
           {task.description && <MarkdownContent text={task.description} mentionUsersById={mentionUsersById} />}

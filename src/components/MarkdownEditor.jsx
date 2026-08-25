@@ -71,7 +71,7 @@ function mentionConfig(mentionMembers, mentionUsersById) {
       )
     },
     menuClassName:
-      'rounded-md border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-800',
+      'min-w-[200px] rounded-md border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-800',
     menuItemClassName: 'cursor-pointer',
     menuItemSelectedClassName: 'bg-indigo-50 dark:bg-indigo-950/40',
   }
@@ -95,7 +95,16 @@ function MarkdownEditor({ value, onChange, mentionMembers, mentionUsersById, pla
       // as the user's own avatar (src/lib/imageUtils.js), so no server
       // endpoint or auth-gated serving is needed. Trades off larger stored
       // text for zero extra infrastructure.
-      imagePlugin({ imageUploadHandler: (file) => resizeImageFile(file, CONTENT_IMAGE_MAX_SIZE) }),
+      // disableImageResize: MDXEditor serializes an image as a raw HTML
+      // <img> (instead of markdown `![]()`) once it carries explicit
+      // width/height — resizing is the only thing that sets those. Turning
+      // resize off keeps every image on the plain markdown path, which
+      // MarkdownContent.jsx's react-markdown pipeline can render without
+      // needing to parse raw HTML (a much bigger, harder-to-scope allowance).
+      imagePlugin({
+        imageUploadHandler: (file) => resizeImageFile(file, CONTENT_IMAGE_MAX_SIZE),
+        disableImageResize: true,
+      }),
       markdownShortcutPlugin(),
       toolbarPlugin({
         toolbarContents: () => (
