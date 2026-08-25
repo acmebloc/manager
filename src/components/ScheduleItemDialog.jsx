@@ -17,17 +17,20 @@ function FollowerPicker({ members, followers, onChange }) {
   const [remoteCandidates, setRemoteCandidates] = useState([])
   const debounceRef = useRef(null)
   const followerIds = new Set(followers.map((f) => f.id))
-  // 입력창 placeholder가 "@로 검색"이라 사용자가 실제로 '@'를 타이핑하는데,
-  // 그 '@'는 트리거일 뿐 검색어의 일부가 아니다(일감 댓글 멘션에서 typeahead
-  // 플러그인이 트리거 문자를 떼고 넘겨주는 것과 같은 의미) — 이걸 그대로
-  // matchesKoreanQuery/서버 검색에 넘기면 이름엔 '@'가 없어 로컬 검색은
-  // 전부 걸러지고, 이메일엔 '@'가 다 들어있어 서버 검색은 반대로 전원이
-  // 걸리는(우연히 맞는 것처럼 보이는) 문제가 있어 여기서 떼고 시작한다.
-  const term = query.trim().replace(/^@/, '').trim()
+  // 일감 댓글 멘션과 동일하게, '@'를 실제로 타이핑해야 검색이 시작된다 —
+  // 트리거 없이 아무 텍스트나 쳐도 뜨면 멘션 경험이 메뉴마다 달라지므로
+  // 통일한다. '@' 뒤의 텍스트만 실제 검색어로 쓰고(트리거 문자 자체는
+  // 검색어에서 제외), '@'만 입력한 상태(term==='')는 멘션 typeahead와 같이
+  // 후보를 전부 보여준다 — matchesKoreanQuery는 빈 문자열 쿼리에 항상
+  // true를 주고, /api/users도 q가 비어 있으면 전체를 돌려주므로 로컬/원격
+  // 둘 다 자연히 같은 동작이 된다.
+  const trimmed = query.trim()
+  const hasTrigger = trimmed.startsWith('@')
+  const term = hasTrigger ? trimmed.slice(1).trim() : ''
 
   useEffect(() => {
     if (members) return undefined // 로컬 검색이라 서버 호출 불필요
-    if (!term) {
+    if (!hasTrigger) {
       setRemoteCandidates([])
       return undefined
     }
@@ -42,12 +45,18 @@ function FollowerPicker({ members, followers, onChange }) {
     }, 250)
     return () => clearTimeout(debounceRef.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [term, members])
+  }, [hasTrigger, term, members])
 
+  // 이름/이메일 둘 다로 찾을 수 있어야 한다 — 일감 댓글 멘션(mentionConfig의
+  // searchCallback)과 같은 기준.
   const candidates = members
-    ? term === ''
+    ? !hasTrigger
       ? []
-      : members.filter((m) => !followerIds.has(m.id) && matchesKoreanQuery(m.name, term)).slice(0, 6)
+      : members
+          .filter(
+            (m) => !followerIds.has(m.id) && (matchesKoreanQuery(m.name, term) || matchesKoreanQuery(m.email, term)),
+          )
+          .slice(0, 6)
     : remoteCandidates
 
   const add = (user) => {
