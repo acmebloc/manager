@@ -8,8 +8,8 @@ import { loadSession } from '../lib/secureProfileStore'
 const MENU_ITEMS = [
   { to: '/dashboard', label: '홈', end: true },
   { to: '/projects', label: '프로젝트' },
-  { to: '/tasks', label: '일감관리' },
-  { to: '/schedule', label: '일정관리' },
+  { to: '/tasks', label: '일감' },
+  { to: '/schedule', label: '일정' },
   { to: '/board', label: '게시판', external: true },
   { to: '/mypage', label: '마이페이지' },
 ]

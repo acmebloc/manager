@@ -7,6 +7,9 @@ import MarkdownContent from '../components/MarkdownContent'
 import MarkdownEditor from '../components/MarkdownEditor'
 import TaskAttachments from '../components/TaskAttachments'
 import TaskComments from '../components/TaskComments'
+import TaskLinks from '../components/TaskLinks'
+
+const EMPTY_LINKS = { parents: [], children: [], related: [] }
 
 const EMPTY_DRAFT = {
   title: '',
@@ -17,6 +20,9 @@ const EMPTY_DRAFT = {
   assigneeId: '',
   startAt: '',
   endAt: '',
+  parentTasks: [],
+  childTasks: [],
+  relatedTasks: [],
 }
 
 function toDateInputValue(value) {
@@ -28,7 +34,9 @@ function formatDate(value) {
   return new Date(value).toLocaleDateString('ko-KR')
 }
 
-function draftFromTask(task) {
+// links는 마지막으로 불러오거나 저장된 부모/자식/연결일감 — 편집 중 선택을
+// 취소했을 때 되돌아갈 기준점이라 draft와 분리해서 들고 있는다(TaskFormPage 참고).
+function draftFromTask(task, links = EMPTY_LINKS) {
   return {
     title: task.title,
     description: task.description || '',
@@ -38,6 +46,9 @@ function draftFromTask(task) {
     assigneeId: task.assigneeId || '',
     startAt: toDateInputValue(task.startAt),
     endAt: toDateInputValue(task.endAt),
+    parentTasks: links.parents,
+    childTasks: links.children,
+    relatedTasks: links.related,
   }
 }
 
@@ -53,13 +64,15 @@ function buildAssigneeOptions(members, task) {
 }
 
 function TaskFormPage() {
-  const { id: projectId, taskId } = useParams()
+  const { projectId, taskId } = useParams()
   const navigate = useNavigate()
   const isNew = !taskId
 
   const [project, setProject] = useState(null)
   const [members, setMembers] = useState([])
+  const [allTasks, setAllTasks] = useState([])
   const [task, setTask] = useState(null)
+  const [links, setLinks] = useState(EMPTY_LINKS)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [editing, setEditing] = useState(isNew)
@@ -74,15 +87,21 @@ function TaskFormPage() {
         const requests = [
           apiFetch(`/api/projects/${projectId}`),
           apiFetch(`/api/projects/${projectId}/members`),
+          apiFetch(`/api/projects/${projectId}/tasks`),
         ]
-        if (!isNew) requests.push(apiFetch(`/api/projects/${projectId}/tasks/${taskId}`))
-        const [projectData, memberData, taskData] = await Promise.all(requests)
+        if (!isNew) {
+          requests.push(apiFetch(`/api/projects/${projectId}/tasks/${taskId}`))
+          requests.push(apiFetch(`/api/projects/${projectId}/tasks/${taskId}/links`))
+        }
+        const [projectData, memberData, taskListData, taskData, linksData] = await Promise.all(requests)
         if (cancelled) return
         setProject(projectData)
         setMembers(memberData)
+        setAllTasks(taskListData)
         if (taskData) {
           setTask(taskData)
-          setDraft(draftFromTask(taskData))
+          setLinks(linksData)
+          setDraft(draftFromTask(taskData, linksData))
         }
       } catch (err) {
         if (!cancelled) setLoadError(err.message)
@@ -94,6 +113,23 @@ function TaskFormPage() {
       cancelled = true
     }
   }, [projectId, taskId, isNew])
+
+  // 자기 자신은 스스로의 부모/자식/연결로 고를 수 없다. GET .../tasks(목록)의
+  // 풍부한 형태가 아니라 GET .../links가 돌려주는 것과 같은 가벼운 형태로
+  // 맞춰둔다 — 그래야 isDirty 비교(JSON.stringify)가 "같은 일감인데 다른
+  // 모양"으로 어긋나지 않는다.
+  const linkCandidates = useMemo(
+    () =>
+      allTasks
+        .filter((t) => t.id !== taskId)
+        .map((t) => ({ id: t.id, title: t.title, type: t.type, grade: t.grade, status: t.status })),
+    [allTasks, taskId],
+  )
+
+  const setLinkField = (key, tasks) => {
+    const draftKey = { parents: 'parentTasks', children: 'childTasks', related: 'relatedTasks' }[key]
+    setDraft((d) => ({ ...d, [draftKey]: tasks }))
+  }
 
   const memberUsers = useMemo(() => members.map((m) => m.user), [members])
   const mentionUsersById = useMemo(() => new Map(memberUsers.map((m) => [m.id, m])), [memberUsers])
@@ -108,23 +144,23 @@ function TaskFormPage() {
 
   const isDirty = useMemo(() => {
     if (!editing) return false
-    const baseline = task ? draftFromTask(task) : EMPTY_DRAFT
+    const baseline = task ? draftFromTask(task, links) : EMPTY_DRAFT
     return JSON.stringify(draft) !== JSON.stringify(baseline)
-  }, [editing, task, draft])
+  }, [editing, task, links, draft])
 
-  const goToBoard = () => navigate(`/projects/${projectId}/board`)
+  const goToTasks = () => navigate('/tasks')
 
-  const requestGoToBoard = () => {
+  const requestGoToTasks = () => {
     if (isDirty && !window.confirm('저장하지 않은 변경이 있습니다. 나갈까요?')) return
-    goToBoard()
+    goToTasks()
   }
 
   const cancelEdit = () => {
     if (isNew) {
-      goToBoard()
+      goToTasks()
       return
     }
-    setDraft(draftFromTask(task))
+    setDraft(draftFromTask(task, links))
     setEditing(false)
     setError('')
   }
@@ -137,6 +173,11 @@ function TaskFormPage() {
     }
     setSaving(true)
     try {
+      const newLinks = {
+        parents: draft.parentTasks,
+        children: draft.childTasks,
+        related: draft.relatedTasks,
+      }
       const body = {
         title: draft.title.trim(),
         description: draft.description.trim() || null,
@@ -146,6 +187,9 @@ function TaskFormPage() {
         startAt: draft.startAt || null,
         endAt: draft.endAt || null,
         ...(isNew ? {} : { status: draft.status }),
+        parentTaskIds: newLinks.parents.map((t) => t.id),
+        childTaskIds: newLinks.children.map((t) => t.id),
+        relatedTaskIds: newLinks.related.map((t) => t.id),
       }
       if (isNew) {
         const created = await apiFetch(`/api/projects/${projectId}/tasks`, { method: 'POST', body })
@@ -154,12 +198,14 @@ function TaskFormPage() {
         // null (isNew flips to false as soon as the URL changes, regardless
         // of whether the navigation actually remounts this component).
         setTask(created)
-        setDraft(draftFromTask(created))
+        setLinks(newLinks)
+        setDraft(draftFromTask(created, newLinks))
         setEditing(false)
-        navigate(`/projects/${projectId}/tasks/${created.id}`, { replace: true })
+        navigate(`/tasks/${projectId}/${created.id}`, { replace: true })
       } else {
         const updated = await apiFetch(`/api/projects/${projectId}/tasks/${taskId}`, { method: 'PATCH', body })
         setTask(updated)
+        setLinks(newLinks)
         setEditing(false)
       }
       setError('')
@@ -197,7 +243,7 @@ function TaskFormPage() {
     if (!window.confirm('일감을 삭제할까요? 첨부파일과 댓글도 함께 삭제됩니다.')) return
     try {
       await apiFetch(`/api/projects/${projectId}/tasks/${taskId}`, { method: 'DELETE' })
-      goToBoard()
+      goToTasks()
     } catch (err) {
       setError(err.message)
     }
@@ -217,10 +263,10 @@ function TaskFormPage() {
     <div className="mx-auto w-full max-w-3xl px-4 py-8">
       <button
         type="button"
-        onClick={requestGoToBoard}
+        onClick={requestGoToTasks}
         className="mb-4 inline-block text-xs text-gray-400 hover:text-gray-700 dark:hover:text-white"
       >
-        ← {project?.name} 칸반 보드
+        ← 일감 ({project?.name})
       </button>
 
       {editing ? (
@@ -379,7 +425,7 @@ function TaskFormPage() {
                     // via the select just below can otherwise land between
                     // this click and load, and the stale draft would then
                     // overwrite it back on save.
-                    setDraft(draftFromTask(task))
+                    setDraft(draftFromTask(task, links))
                     setEditing(true)
                   }}
                   className="text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"
@@ -458,6 +504,18 @@ function TaskFormPage() {
           {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
         </div>
       )}
+
+      <div className="mt-4">
+        <TaskLinks
+          projectId={projectId}
+          editing={editing}
+          candidates={linkCandidates}
+          parents={draft.parentTasks}
+          childTasks={draft.childTasks}
+          related={draft.relatedTasks}
+          onChange={setLinkField}
+        />
+      </div>
 
       {!isNew && (
         <>

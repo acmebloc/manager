@@ -90,9 +90,29 @@ model Task {
 
   attachments TaskAttachment[]
   comments    TaskComment[]
+  linksFrom   TaskLink[]       @relation("TaskLinkFrom")
+  linksTo     TaskLink[]       @relation("TaskLinkTo")
 
   @@index([projectId, status])
   @@index([assigneeId])
+}
+
+// 일감 간 순수 관계 표시용 — 상태 등 어떤 기능도 연동되지 않는다. 'parent'는
+// 방향이 있는 관계(fromTask가 자식, toTask가 부모)이고, "자식일감" 목록은 그
+// 역방향 조회일 뿐 별도 타입이 아니다. 'related'(연결일감)는 방향이 없는
+// 대칭 관계 — 어느 쪽에서 만들어도 fromTaskId/toTaskId 양쪽에서 조회된다.
+// 부모/자식/연결 모두 여러 개 허용, 같은 프로젝트 내로만 제한(코드 레벨 검증).
+model TaskLink {
+  id         String   @id @default(cuid())
+  fromTaskId String
+  fromTask   Task     @relation("TaskLinkFrom", fields: [fromTaskId], references: [id], onDelete: Cascade)
+  toTaskId   String
+  toTask     Task     @relation("TaskLinkTo", fields: [toTaskId], references: [id], onDelete: Cascade)
+  type       String   // parent | related
+  createdAt  DateTime @default(now())
+
+  @@unique([fromTaskId, toTaskId, type])
+  @@index([toTaskId, type])
 }
 
 model TaskAttachment {

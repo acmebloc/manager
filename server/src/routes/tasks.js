@@ -47,6 +47,76 @@ async function currentMemberIds(projectId) {
   return new Set(members.map((m) => m.userId))
 }
 
+// Relationships are scoped to one project (confirmed with the user) — silently
+// drop anything else, same "invalid input just doesn't apply" pattern as
+// assignee/mention validation elsewhere in this file/taskComments.js. Also
+// drops the task's own id, since a self-link is never meaningful.
+async function sameProjectTaskIds(projectId, taskId, ids) {
+  if (!Array.isArray(ids) || ids.length === 0) return []
+  const candidates = ids.filter((id) => id !== taskId)
+  if (candidates.length === 0) return []
+  const found = await prisma.task.findMany({
+    where: { id: { in: candidates }, projectId },
+    select: { id: true },
+  })
+  return found.map((t) => t.id)
+}
+
+const linkTaskSelect = { id: true, title: true, type: true, grade: true, status: true }
+
+// Purely relational — no functional coupling (confirmed with the user):
+// changing a linked task's status/fields never touches this task. 'parent'
+// is directional (fromTask is the child); "children" is just the reverse
+// query, not a separate stored type. 'related' is symmetric, so it's stored
+// once but read from either side.
+//
+// Each type's delete+recreate pair runs inside one transaction so a save
+// never leaves that type's links in a transiently-empty (or partially
+// applied) state if a later step in the same request fails.
+async function applyTaskLinks(projectId, taskId, { parentTaskIds, childTaskIds, relatedTaskIds }) {
+  const operations = []
+
+  if (parentTaskIds !== undefined) {
+    const ids = await sameProjectTaskIds(projectId, taskId, parentTaskIds)
+    operations.push(prisma.taskLink.deleteMany({ where: { fromTaskId: taskId, type: 'parent' } }))
+    if (ids.length > 0) {
+      operations.push(
+        prisma.taskLink.createMany({
+          data: ids.map((toTaskId) => ({ fromTaskId: taskId, toTaskId, type: 'parent' })),
+        }),
+      )
+    }
+  }
+  if (childTaskIds !== undefined) {
+    const ids = await sameProjectTaskIds(projectId, taskId, childTaskIds)
+    operations.push(prisma.taskLink.deleteMany({ where: { toTaskId: taskId, type: 'parent' } }))
+    if (ids.length > 0) {
+      operations.push(
+        prisma.taskLink.createMany({
+          data: ids.map((fromTaskId) => ({ fromTaskId, toTaskId: taskId, type: 'parent' })),
+        }),
+      )
+    }
+  }
+  if (relatedTaskIds !== undefined) {
+    const ids = await sameProjectTaskIds(projectId, taskId, relatedTaskIds)
+    operations.push(
+      prisma.taskLink.deleteMany({
+        where: { type: 'related', OR: [{ fromTaskId: taskId }, { toTaskId: taskId }] },
+      }),
+    )
+    if (ids.length > 0) {
+      operations.push(
+        prisma.taskLink.createMany({
+          data: ids.map((toTaskId) => ({ fromTaskId: taskId, toTaskId, type: 'related' })),
+        }),
+      )
+    }
+  }
+
+  if (operations.length > 0) await prisma.$transaction(operations)
+}
+
 // An assignee who isn't on the project couldn't open the task they were
 // given, so reject that rather than creating one nobody can act on. Skipped
 // entirely when assigneeId isn't actually changing, so a task whose assignee
@@ -95,8 +165,49 @@ router.get('/:id', requireProjectRole('member'), async (req, res) => {
   res.json(decryptTask(task, memberIds, req.user, req.projectAccess))
 })
 
+router.get('/:id/links', requireProjectRole('member'), async (req, res) => {
+  const task = await prisma.task.findFirst({
+    where: { id: req.params.id, projectId: req.params.projectId },
+    select: { id: true },
+  })
+  if (!task) return res.status(404).json({ error: 'Not found' })
+
+  const [parentLinks, childLinks, relatedLinks] = await Promise.all([
+    prisma.taskLink.findMany({
+      where: { fromTaskId: task.id, type: 'parent' },
+      select: { toTask: { select: linkTaskSelect } },
+    }),
+    prisma.taskLink.findMany({
+      where: { toTaskId: task.id, type: 'parent' },
+      select: { fromTask: { select: linkTaskSelect } },
+    }),
+    prisma.taskLink.findMany({
+      where: { type: 'related', OR: [{ fromTaskId: task.id }, { toTaskId: task.id }] },
+      select: { fromTaskId: true, fromTask: { select: linkTaskSelect }, toTask: { select: linkTaskSelect } },
+    }),
+  ])
+
+  res.json({
+    parents: parentLinks.map((l) => l.toTask),
+    children: childLinks.map((l) => l.fromTask),
+    related: relatedLinks.map((l) => (l.fromTaskId === task.id ? l.toTask : l.fromTask)),
+  })
+})
+
 router.post('/', requireProjectRole('member'), async (req, res) => {
-  const { title, description, type, grade, status, assigneeId, startAt, endAt } = req.body
+  const {
+    title,
+    description,
+    type,
+    grade,
+    status,
+    assigneeId,
+    startAt,
+    endAt,
+    parentTaskIds,
+    childTaskIds,
+    relatedTaskIds,
+  } = req.body
   if (!title) return res.status(400).json({ error: 'title is required' })
   if (type !== undefined && !isValidTaskType(type)) {
     return res.status(400).json({ error: 'Invalid type' })
@@ -128,6 +239,7 @@ router.post('/', requireProjectRole('member'), async (req, res) => {
     },
     include: taskInclude,
   })
+  await applyTaskLinks(req.params.projectId, task.id, { parentTaskIds, childTaskIds, relatedTaskIds })
   const memberIds = await currentMemberIds(req.params.projectId)
   res.status(201).json(decryptTask(task, memberIds, req.user, req.projectAccess))
 })
@@ -141,7 +253,19 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
     return res.status(403).json({ error: 'Forbidden' })
   }
 
-  const { title, description, type, grade, status, assigneeId, startAt, endAt } = req.body
+  const {
+    title,
+    description,
+    type,
+    grade,
+    status,
+    assigneeId,
+    startAt,
+    endAt,
+    parentTaskIds,
+    childTaskIds,
+    relatedTaskIds,
+  } = req.body
   if (type !== undefined && !isValidTaskType(type)) {
     return res.status(400).json({ error: 'Invalid type' })
   }
@@ -175,6 +299,7 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
     },
     include: taskInclude,
   })
+  await applyTaskLinks(req.params.projectId, task.id, { parentTaskIds, childTaskIds, relatedTaskIds })
   const memberIds = await currentMemberIds(req.params.projectId)
   res.json(decryptTask(task, memberIds, req.user, req.projectAccess))
 })
