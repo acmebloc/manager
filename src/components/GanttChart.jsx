@@ -9,7 +9,17 @@ const ZOOM_LABEL = { day: '일', week: '주', month: '월' }
 // 줌/오늘표시선/가운데 정렬/헤더 눈금은 완전히 동일한 로직이라 여기 하나로
 // 모았다. 데이터를 어디서 가져오는지, 클릭했을 때 어떤 다이얼로그를 여는지는
 // 각 호출부(ProjectGantt/PersonalGantt) 책임.
-function GanttChart({ items, range, legend, barClassFor, onBarClick, onNewClick, newButtonLabel = '새 일정', emptyMessage }) {
+function GanttChart({
+  items,
+  range,
+  legend,
+  barClassFor,
+  barTitleFor = (item) => item.title,
+  onBarClick,
+  onNewClick,
+  newButtonLabel = '새 일정',
+  emptyMessage,
+}) {
   const [zoom, setZoom] = useState('day')
   const scrollRef = useRef(null)
   const hoveredRef = useRef(false)
@@ -157,7 +167,7 @@ function GanttChart({ items, range, legend, barClassFor, onBarClick, onNewClick,
                     <button
                       type="button"
                       onClick={() => onBarClick(item)}
-                      title={item.title}
+                      title={barTitleFor(item)}
                       className={`absolute top-1.5 truncate rounded px-2 text-left text-xs font-medium text-white ${barClassFor(item)}`}
                       style={{ left: bar.left, width: Math.max(bar.width, 8), height: ROW_HEIGHT - 12 }}
                     >

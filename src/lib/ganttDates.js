@@ -40,12 +40,19 @@ export function daysBetween(a, b) {
   return Math.round((startOfDay(b) - startOfDay(a)) / MS_PER_DAY)
 }
 
-// A personal schedule can be created without an end date (endAt stays
-// optional there — only a project bar requires one). Treated as a one-day
-// bar for every date/geometry calculation below, without touching the
-// stored value.
+// Two cases fall back here instead of using the raw stored dates:
+//  - A personal schedule can be created without an end date (endAt stays
+//    optional there — only a project bar requires one) → falls back to
+//    startAt, a one-day bar.
+//  - A task with no startAt/endAt at all still gets a placeholder bar on
+//    its createdAt (registration date), one day wide (일감 스펙 규칙 1/2) —
+//    display-only, never written back to the task unless the user actually
+//    edits it through the chart (규칙 4).
+function effectiveStart(item) {
+  return item.startAt || item.createdAt
+}
 function effectiveEnd(item) {
-  return item.endAt || item.startAt
+  return item.endAt || item.startAt || item.createdAt
 }
 
 // Always spans today (padded a couple weeks either side so an empty or
@@ -56,7 +63,7 @@ export function computeRange(items) {
   let min = addDays(today, -14)
   let max = addDays(today, 30)
   for (const item of items) {
-    const s = startOfDay(item.startAt)
+    const s = startOfDay(effectiveStart(item))
     const e = startOfDay(effectiveEnd(item))
     if (s < min) min = s
     if (e > max) max = e
@@ -71,7 +78,7 @@ export function computeYearRange(items, referenceDate = new Date()) {
   let min = new Date(year, 0, 1)
   let max = new Date(year, 11, 31)
   for (const item of items) {
-    const s = startOfDay(item.startAt)
+    const s = startOfDay(effectiveStart(item))
     const e = startOfDay(effectiveEnd(item))
     if (s < min) min = s
     if (e > max) max = e
@@ -91,8 +98,9 @@ export function todayX(range, zoom) {
 // item sits in never does (spec requirement: 세로값 변화 없이 가로값만 변화).
 export function barGeometry(item, range, zoom) {
   const px = pxPerDayFor(zoom)
-  const left = daysBetween(range.start, item.startAt) * px
-  const width = (daysBetween(item.startAt, effectiveEnd(item)) + 1) * px
+  const start = effectiveStart(item)
+  const left = daysBetween(range.start, start) * px
+  const width = (daysBetween(start, effectiveEnd(item)) + 1) * px
   return { left, width }
 }
 
