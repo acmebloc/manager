@@ -304,6 +304,35 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
   res.json(decryptTask(task, memberIds, req.user, req.projectAccess))
 })
 
+// Backs the project Gantt chart (일정 메뉴) — any project member may drag a
+// task's bar to reschedule it there, which is a broader edit right than the
+// task's own PATCH allows (canModifyTask: admin/creator/assignee only). This
+// route only ever touches startAt/endAt, never the rest of the task, so that
+// broader right can't be used to sneak in other field changes.
+router.patch('/:id/dates', requireProjectRole('member'), async (req, res) => {
+  const existing = await prisma.task.findFirst({
+    where: { id: req.params.id, projectId: req.params.projectId },
+  })
+  if (!existing) return res.status(404).json({ error: 'Not found' })
+
+  const { startAt, endAt } = req.body
+  const nextStartAt = startAt !== undefined ? startAt : existing.startAt
+  const nextEndAt = endAt !== undefined ? endAt : existing.endAt
+  const dateProblem = assertDateOrder(nextStartAt, nextEndAt)
+  if (dateProblem) return res.status(400).json({ error: dateProblem })
+
+  const task = await prisma.task.update({
+    where: { id: req.params.id },
+    data: {
+      ...(startAt !== undefined && { startAt: startAt ? new Date(startAt) : null }),
+      ...(endAt !== undefined && { endAt: endAt ? new Date(endAt) : null }),
+    },
+    include: taskInclude,
+  })
+  const memberIds = await currentMemberIds(req.params.projectId)
+  res.json(decryptTask(task, memberIds, req.user, req.projectAccess))
+})
+
 router.delete('/:id', requireProjectRole('member'), async (req, res) => {
   const existing = await prisma.task.findFirst({
     where: { id: req.params.id, projectId: req.params.projectId },

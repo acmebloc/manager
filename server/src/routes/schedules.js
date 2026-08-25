@@ -2,16 +2,61 @@ import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
 import { getProjectAccess } from '../lib/projectAccess.js'
+import { assertDateOrder } from '../lib/taskFields.js'
 
 const router = Router()
 
+const userSelect = { id: true, name: true, email: true, picture: true }
+
 const scheduleInclude = {
-  owner: { select: { id: true, name: true, email: true, picture: true } },
+  owner: { select: userSelect },
   project: { select: { id: true, name: true } },
+  followers: { select: { user: { select: userSelect } } },
 }
 
 function decryptSchedule(schedule) {
-  return { ...schedule, owner: decryptUser(schedule.owner) }
+  return {
+    ...schedule,
+    owner: decryptUser(schedule.owner),
+    followers: schedule.followers.map((f) => decryptUser(f.user)),
+  }
+}
+
+// A project-tied schedule is shared with the whole project (spec: "일정표는
+// 프로젝트 참여자 모두 추가/수정/삭제 가능") — any member may edit or delete it,
+// not just whoever created it. A personal schedule (no project) stays private
+// to its owner, same as before.
+async function canModifySchedule(schedule, user) {
+  if (user.isSiteAdmin) return true
+  if (!schedule.projectId) return schedule.ownerId === user.id
+  const access = await getProjectAccess(schedule.projectId, user)
+  return Boolean(access)
+}
+
+// Followers ("참조자") only make sense among people who can actually see the
+// schedule, same reasoning as assignee-must-be-member for tasks
+// (tasks.js's assertAssigneeIsMember) — so only checked when projectId is set;
+// a personal schedule has no follower-tagging UI at all.
+async function assertFollowersAreMembers(projectId, followerIds) {
+  if (!projectId || !Array.isArray(followerIds) || followerIds.length === 0) return null
+  const members = await prisma.projectMember.findMany({
+    where: { projectId, userId: { in: followerIds } },
+    select: { userId: true },
+  })
+  return members.length === followerIds.length ? null : 'Followers must be members of this project'
+}
+
+async function setFollowers(scheduleId, followerIds) {
+  await prisma.$transaction([
+    prisma.scheduleFollower.deleteMany({ where: { scheduleId } }),
+    ...(followerIds.length > 0
+      ? [
+          prisma.scheduleFollower.createMany({
+            data: followerIds.map((userId) => ({ scheduleId, userId })),
+          }),
+        ]
+      : []),
+  ])
 }
 
 // A schedule is visible if you own it, or if it belongs to a project you're
@@ -32,7 +77,20 @@ async function memberProjectIds(userId) {
 }
 
 router.get('/', async (req, res) => {
-  const { projectId } = req.query
+  const { projectId, personalOnly } = req.query
+
+  // Backs the /schedule page's "개인 일정" section — the caller's own
+  // schedules that aren't tied to any project, regardless of site-admin
+  // status (site admin reach is about seeing *other people's* project
+  // schedules, not everyone's personal ones).
+  if (personalOnly === 'true') {
+    const schedules = await prisma.schedule.findMany({
+      where: { ownerId: req.user.id, projectId: null },
+      orderBy: { startAt: 'asc' },
+      include: scheduleInclude,
+    })
+    return res.json(schedules.map(decryptSchedule))
+  }
 
   // The site admin sees every project's schedules, not just ones they
   // belong to — same site-wide reach as the project list.
@@ -62,10 +120,18 @@ router.get('/', async (req, res) => {
 })
 
 router.post('/', async (req, res) => {
-  const { title, startAt, endAt, projectId } = req.body
+  const { title, startAt, endAt, projectId, followerIds = [] } = req.body
   if (!title || !startAt) {
     return res.status(400).json({ error: 'title and startAt are required' })
   }
+  // A project schedule is a bar on the project's Gantt chart, so it needs
+  // an end date to occupy a range — only the personal schedule form leaves
+  // this optional.
+  if (projectId && !endAt) {
+    return res.status(400).json({ error: 'endAt is required for a project schedule' })
+  }
+  const dateProblem = assertDateOrder(startAt, endAt)
+  if (dateProblem) return res.status(400).json({ error: dateProblem })
 
   // Attaching a schedule to a project shares it with that project's
   // members, so the caller has to be one of them. Every project role can
@@ -74,6 +140,8 @@ router.post('/', async (req, res) => {
     const access = await getProjectAccess(projectId, req.user)
     if (!access) return res.status(404).json({ error: 'Project not found' })
   }
+  const followerProblem = await assertFollowersAreMembers(projectId, followerIds)
+  if (followerProblem) return res.status(400).json({ error: followerProblem })
 
   const schedule = await prisma.schedule.create({
     data: {
@@ -83,27 +151,46 @@ router.post('/', async (req, res) => {
       projectId: projectId || null,
       ownerId: req.user.id,
     },
-    include: scheduleInclude,
   })
-  res.status(201).json(decryptSchedule(schedule))
+  if (projectId && followerIds.length > 0) await setFollowers(schedule.id, followerIds)
+
+  const withIncludes = await prisma.schedule.findUnique({ where: { id: schedule.id }, include: scheduleInclude })
+  res.status(201).json(decryptSchedule(withIncludes))
 })
 
-// Editing and deleting stay with the person who created the schedule, even
-// when others can see it through a shared project — except the site admin,
-// who has full authority over every schedule.
+// Anyone on the schedule's project may edit or delete it (spec: "일정표는
+// 프로젝트 참여자 모두 추가/수정/삭제 가능"); a personal (no-project) schedule
+// stays owner-only. See canModifySchedule above.
 router.patch('/:id', async (req, res) => {
-  const existing = await prisma.schedule.findFirst({
-    where: { id: req.params.id, ...(req.user.isSiteAdmin ? {} : { ownerId: req.user.id }) },
-  })
+  const existing = await prisma.schedule.findUnique({ where: { id: req.params.id } })
   if (!existing) return res.status(404).json({ error: 'Not found' })
-
-  const { title, startAt, endAt, projectId } = req.body
-  if (projectId) {
-    const access = await getProjectAccess(projectId, req.user)
-    if (!access) return res.status(404).json({ error: 'Project not found' })
+  // 404, not 403 — someone with no access to this schedule (not its owner,
+  // not on its project) shouldn't be able to tell it exists at all, same
+  // convention as requireProjectRole's null-access branch (projectAccess.js).
+  if (!(await canModifySchedule(existing, req.user))) {
+    return res.status(404).json({ error: 'Not found' })
   }
 
-  const schedule = await prisma.schedule.update({
+  const { title, startAt, endAt, projectId, followerIds } = req.body
+  const nextProjectId = projectId !== undefined ? projectId || null : existing.projectId
+  const nextStartAt = startAt !== undefined ? startAt : existing.startAt
+  const nextEndAt = endAt !== undefined ? endAt : existing.endAt
+  if (nextProjectId && !nextEndAt) {
+    return res.status(400).json({ error: 'endAt is required for a project schedule' })
+  }
+  const dateProblem = assertDateOrder(nextStartAt, nextEndAt)
+  if (dateProblem) return res.status(400).json({ error: dateProblem })
+
+  if (nextProjectId) {
+    const access = await getProjectAccess(nextProjectId, req.user)
+    if (!access) return res.status(404).json({ error: 'Project not found' })
+  }
+  if (followerIds !== undefined) {
+    const followerProblem = await assertFollowersAreMembers(nextProjectId, followerIds)
+    if (followerProblem) return res.status(400).json({ error: followerProblem })
+  }
+
+  await prisma.schedule.update({
     where: { id: req.params.id },
     data: {
       ...(title !== undefined && { title }),
@@ -111,16 +198,22 @@ router.patch('/:id', async (req, res) => {
       ...(endAt !== undefined && { endAt: endAt ? new Date(endAt) : null }),
       ...(projectId !== undefined && { projectId: projectId || null }),
     },
-    include: scheduleInclude,
   })
+  if (followerIds !== undefined) await setFollowers(req.params.id, nextProjectId ? followerIds : [])
+
+  const schedule = await prisma.schedule.findUnique({ where: { id: req.params.id }, include: scheduleInclude })
   res.json(decryptSchedule(schedule))
 })
 
 router.delete('/:id', async (req, res) => {
-  const existing = await prisma.schedule.findFirst({
-    where: { id: req.params.id, ...(req.user.isSiteAdmin ? {} : { ownerId: req.user.id }) },
-  })
+  const existing = await prisma.schedule.findUnique({ where: { id: req.params.id } })
   if (!existing) return res.status(404).json({ error: 'Not found' })
+  // 404, not 403 — someone with no access to this schedule (not its owner,
+  // not on its project) shouldn't be able to tell it exists at all, same
+  // convention as requireProjectRole's null-access branch (projectAccess.js).
+  if (!(await canModifySchedule(existing, req.user))) {
+    return res.status(404).json({ error: 'Not found' })
+  }
   await prisma.schedule.delete({ where: { id: req.params.id } })
   res.status(204).end()
 })

@@ -29,6 +29,7 @@ model User {
   taskComments        TaskComment[]        @relation("TaskCommentAuthor")
   taskCommentMentions TaskCommentMention[] @relation("TaskCommentMentionedUser")
   schedules           Schedule[]           @relation("ScheduleOwner")
+  scheduleFollowing   ScheduleFollower[]   @relation("ScheduleFollowerUser")
   oidcCodes           OidcAuthCode[]
 }
 
@@ -166,6 +167,20 @@ model Schedule {
   owner     User      @relation("ScheduleOwner", fields: [ownerId], references: [id])
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+
+  followers ScheduleFollower[]
+}
+
+// 일정의 "참조자" — 팔로우업 해야 하는 사람들. 프로젝트 일정에서만 의미가 있고
+// (개인 일정은 태깅 UI 자체가 없음), TaskCommentMention과 동일한 조인 테이블 패턴.
+model ScheduleFollower {
+  id         String   @id @default(cuid())
+  scheduleId String
+  schedule   Schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation("ScheduleFollowerUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([scheduleId, userId])
 }
 
 // Short-lived authorization codes for our OIDC provider (used by BookStack
