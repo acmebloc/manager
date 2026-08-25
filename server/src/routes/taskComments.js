@@ -6,9 +6,16 @@ import { requireProjectRole } from '../lib/projectAccess.js'
 // Mounted at /api/projects/:projectId/tasks/:taskId/comments
 const router = Router({ mergeParams: true })
 
+const userSelect = { id: true, name: true, email: true, picture: true }
+
 const commentInclude = {
-  author: { select: { id: true, name: true, email: true, picture: true } },
-  mentions: { select: { userId: true } },
+  author: { select: userSelect },
+  // Full user info, not just the id — a mentioned member's ProjectMember row
+  // can be gone by the time this renders, but the User row (and their
+  // current name) isn't, so the client can still resolve a departed
+  // member's up-to-date name (spec §6.2's "renamed" case, extended to the
+  // "left the project" case too).
+  mentions: { select: { user: { select: userSelect } } },
 }
 
 // Same reasoning as tasks.js's decryptTask: the client never learns its own
@@ -17,8 +24,7 @@ function decryptComment(comment, currentUserId) {
   return {
     ...comment,
     author: decryptUser(comment.author),
-    mentionUserIds: comment.mentions.map((m) => m.userId),
-    mentions: undefined,
+    mentions: comment.mentions.map((m) => decryptUser(m.user)),
     isMine: comment.authorId === currentUserId,
   }
 }
@@ -35,7 +41,7 @@ async function loadTask(req, res) {
 }
 
 // The client already knows exactly who it mentioned (it built the
-// @[name](user:id) markers), so it sends the resolved ids directly instead
+// :mention[id] directives), so it sends the resolved ids directly instead
 // of the server re-parsing them out of the body. Silently drop anyone who
 // isn't actually a project member rather than reject the whole comment —
 // a stale mention shouldn't block posting.

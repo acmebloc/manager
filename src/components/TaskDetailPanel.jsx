@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react'
 import { apiFetch } from '../lib/api'
 import { TASK_GRADES, TASK_STATUSES, TASK_TYPES } from '../lib/taskFields'
 import { Avatar } from './ProjectMembers'
+import MarkdownContent from './MarkdownContent'
+import MarkdownEditor from './MarkdownEditor'
 import TaskAttachments from './TaskAttachments'
 import TaskComments from './TaskComments'
 
@@ -144,12 +146,10 @@ function TaskDetailPanel({ projectId, task, projectMembers, project, onClose, on
               onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
               className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium dark:border-gray-600 dark:bg-gray-800 dark:text-white"
             />
-            <textarea
+            <MarkdownEditor
               value={draft.description}
-              onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
-              rows={5}
-              placeholder="본문 (마크다운 원문으로 저장됩니다)"
-              className="rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+              onChange={(md) => setDraft((d) => ({ ...d, description: md }))}
+              placeholder="본문을 입력하세요"
             />
             <div className="grid grid-cols-3 gap-2">
               <label className="text-xs text-gray-500 dark:text-gray-400">
@@ -287,9 +287,7 @@ function TaskDetailPanel({ projectId, task, projectMembers, project, onClose, on
               </span>
             </div>
 
-            {task.description && (
-              <p className="whitespace-pre-wrap text-sm text-gray-700 dark:text-gray-300">{task.description}</p>
-            )}
+            {task.description && <MarkdownContent text={task.description} />}
 
             <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs text-gray-500 dark:text-gray-400">
               <div>

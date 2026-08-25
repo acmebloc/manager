@@ -57,9 +57,12 @@ export function Avatar({ user }) {
     )
   }
   return (
-    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-200 text-xs font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+    // <span>, not <div> — Avatar now also renders inline inside <p> markdown
+    // content (MarkdownContent's mention chips), where a block element would
+    // force the paragraph to close early.
+    <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-200 text-xs font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-300">
       {(user?.name || '?').slice(0, 1)}
-    </div>
+    </span>
   )
 }
 

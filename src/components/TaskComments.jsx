@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { apiFetch } from '../lib/api'
+import { extractMentionUserIds } from '../lib/mentions'
 import { Avatar } from './ProjectMembers'
-import MentionTextarea, { extractMentionUserIds, renderCommentBody } from './MentionAutocomplete'
+import MarkdownContent from './MarkdownContent'
+import MarkdownEditor from './MarkdownEditor'
 
 function formatDateTime(value) {
   return new Date(value).toLocaleString('ko-KR', { dateStyle: 'medium', timeStyle: 'short' })
 }
 
-function CommentItem({ comment, membersById, onSave, onDelete }) {
+function CommentItem({ comment, mentionMembers, mentionUsersById, onSave, onDelete }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(comment.body)
   const [saving, setSaving] = useState(false)
@@ -46,12 +48,11 @@ function CommentItem({ comment, membersById, onSave, onDelete }) {
         </div>
         {editing ? (
           <div className="mt-1 flex flex-col gap-2">
-            <MentionTextarea
+            <MarkdownEditor
               value={draft}
               onChange={setDraft}
-              members={[...membersById.values()]}
-              rows={2}
-              autoFocus
+              mentionMembers={mentionMembers}
+              mentionUsersById={mentionUsersById}
             />
             <div className="flex gap-2">
               <button
@@ -76,9 +77,7 @@ function CommentItem({ comment, membersById, onSave, onDelete }) {
             </div>
           </div>
         ) : (
-          <p className="mt-1 whitespace-pre-wrap text-sm text-gray-800 dark:text-gray-200">
-            {renderCommentBody(comment.body, membersById)}
-          </p>
+          <MarkdownContent text={comment.body} mentionUsersById={mentionUsersById} />
         )}
         {error && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{error}</p>}
         {comment.isMine && !editing && (
@@ -106,8 +105,20 @@ function TaskComments({ projectId, taskId, members }) {
   const [error, setError] = useState('')
   const [draft, setDraft] = useState('')
   const [posting, setPosting] = useState(false)
+  const [composeKey, setComposeKey] = useState(0)
 
-  const membersById = useMemo(() => new Map(members.map((m) => [m.id, m])), [members])
+  // 현재 멤버 + 과거에 멘션됐지만 지금은 나간 사람까지 합친 맵. 나간 사람도
+  // TaskCommentMention → User 조회는 여전히 유효해서 최신 이름을 계속 보여줄 수
+  // 있다 (스펙 6.2).
+  const mentionUsersById = useMemo(() => {
+    const map = new Map(members.map((m) => [m.id, m]))
+    for (const comment of comments) {
+      for (const user of comment.mentions || []) {
+        if (!map.has(user.id)) map.set(user.id, user)
+      }
+    }
+    return map
+  }, [members, comments])
 
   useEffect(() => {
     let cancelled = false
@@ -136,6 +147,7 @@ function TaskComments({ projectId, taskId, members }) {
       })
       setComments((current) => [...current, comment])
       setDraft('')
+      setComposeKey((k) => k + 1) // MDXEditor's markdown prop is initial-only — remount to clear it
       setError('')
     } catch (err) {
       setError(err.message)
@@ -170,7 +182,8 @@ function TaskComments({ projectId, taskId, members }) {
             <CommentItem
               key={comment.id}
               comment={comment}
-              membersById={membersById}
+              mentionMembers={members}
+              mentionUsersById={mentionUsersById}
               onSave={saveComment}
               onDelete={deleteComment}
             />
@@ -179,12 +192,13 @@ function TaskComments({ projectId, taskId, members }) {
       )}
 
       <div className="mt-3 flex flex-col gap-2">
-        <MentionTextarea
+        <MarkdownEditor
+          key={composeKey}
           value={draft}
           onChange={setDraft}
-          members={members}
+          mentionMembers={members}
+          mentionUsersById={mentionUsersById}
           placeholder="댓글을 입력하세요. @로 멤버를 멘션할 수 있어요"
-          rows={2}
         />
         {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
         <button
