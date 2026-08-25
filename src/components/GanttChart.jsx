@@ -13,7 +13,10 @@ function GanttChart({ items, range, legend, barClassFor, onBarClick, onNewClick,
   const [zoom, setZoom] = useState('day')
   const scrollRef = useRef(null)
   const hoveredRef = useRef(false)
-  const centeredRef = useRef(false)
+  // 마지막으로 "오늘 가운데 정렬"을 해준 줌 단계 — 이 값과 현재 zoom이
+  // 다르면 다시 정렬해야 한다는 뜻(최초 진입 포함, 초기값이 실제 줌 값과
+  // 절대 같을 수 없는 sentinel이라 첫 렌더에도 자연히 한 번 실행된다).
+  const centeredForZoomRef = useRef(null)
 
   // Ctrl/Cmd + '+'/'-' — 브라우저 자체 확대/축소를 막고 간트차트 줌으로
   // 대체한다. 화면에 여러 간트차트가 동시에 떠 있을 수 있어(프로젝트+개인),
@@ -38,15 +41,19 @@ function GanttChart({ items, range, legend, barClassFor, onBarClick, onNewClick,
   const chartWidth = useMemo(() => totalWidth(range, zoom), [range, zoom])
   const todayLeft = useMemo(() => todayX(range, zoom), [range, zoom])
 
-  // 화면 진입 시 한 번, 오늘이 가로 기준 가운데 오도록 스크롤한다. 항목이
-  // 없어서(items.length===0) 스크롤 컨테이너가 아직 안 그려졌을 수도 있어
-  // 매 렌더마다 다시 시도하되, 한 번 성공하면 centeredRef로 더는 건드리지
-  // 않는다(의존성 배열을 안 두는 이유).
+  // 화면 진입 시, 그리고 day/week/month 줌을 바꿀 때마다 오늘이 가로 기준
+  // 가운데 오도록 다시 스크롤한다. 전체 기간이 짧아 가운데 정렬할 여백이
+  // 없으면(스크롤 가능한 폭보다 화면이 넓으면) 브라우저가 scrollLeft를 0으로
+  // 알아서 clamp해줘서 자연히 맨 앞(왼쪽) 기준이 된다 — 별도 분기 불필요.
+  // 항목이 없어서(items.length===0) 스크롤 컨테이너가 아직 안 그려졌을
+  // 수도 있어 매 렌더마다 다시 시도하되, 이번 줌에 대해 한 번 성공하면
+  // centeredForZoomRef로 더는 건드리지 않는다(의존성 배열을 안 두는 이유 —
+  // zoom이 바뀌면 ref와 어긋나서 자동으로 다시 실행된다).
   useEffect(() => {
-    if (centeredRef.current) return
+    if (centeredForZoomRef.current === zoom) return
     const el = scrollRef.current
     if (!el || el.clientWidth === 0) return
-    centeredRef.current = true
+    centeredForZoomRef.current = zoom
     el.scrollLeft = Math.max(0, LABEL_WIDTH + todayLeft - el.clientWidth / 2)
   })
 
