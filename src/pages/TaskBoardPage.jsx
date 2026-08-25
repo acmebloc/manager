@@ -1,119 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { apiFetch } from '../lib/api'
 import { TASK_GRADES, TASK_STATUSES, TASK_TYPES, sortTasks } from '../lib/taskFields'
 import { Avatar } from '../components/ProjectMembers'
-import TaskDetailPanel from '../components/TaskDetailPanel'
 
 function formatDate(value) {
   if (!value) return null
   return new Date(value).toLocaleDateString('ko-KR')
-}
-
-function NewTaskForm({ members, onCreate, onClose }) {
-  const [title, setTitle] = useState('')
-  const [type, setType] = useState('dev')
-  const [grade, setGrade] = useState('minor')
-  const [assigneeId, setAssigneeId] = useState('')
-  const [endAt, setEndAt] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  const submit = async (event) => {
-    event.preventDefault()
-    const trimmed = title.trim()
-    if (!trimmed) return
-    setSaving(true)
-    try {
-      await onCreate({
-        title: trimmed,
-        type,
-        grade,
-        assigneeId: assigneeId || null,
-        endAt: endAt || null,
-      })
-      onClose()
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <form
-      onSubmit={submit}
-      className="mb-4 flex flex-col gap-2 rounded-lg border border-gray-200 p-3 dark:border-gray-700"
-    >
-      <input
-        type="text"
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        placeholder="제목"
-        autoFocus
-        className="rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-      />
-      <div className="flex gap-2">
-        <select
-          value={type}
-          onChange={(e) => setType(e.target.value)}
-          className="rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-        >
-          {TASK_TYPES.map((t) => (
-            <option key={t.value} value={t.value}>
-              {t.label}
-            </option>
-          ))}
-        </select>
-        <select
-          value={grade}
-          onChange={(e) => setGrade(e.target.value)}
-          className="rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-        >
-          {TASK_GRADES.map((g) => (
-            <option key={g.value} value={g.value}>
-              {g.label}
-            </option>
-          ))}
-        </select>
-        <select
-          value={assigneeId}
-          onChange={(e) => setAssigneeId(e.target.value)}
-          className="flex-1 rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-        >
-          <option value="">담당자 미배정</option>
-          {members.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.name}
-            </option>
-          ))}
-        </select>
-        <input
-          type="date"
-          value={endAt}
-          onChange={(e) => setEndAt(e.target.value)}
-          className="rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-        />
-      </div>
-      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
-      <div className="flex gap-2">
-        <button
-          type="submit"
-          disabled={saving || !title.trim()}
-          className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-        >
-          {saving ? '만드는 중...' : '만들기'}
-        </button>
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-md px-3 py-1.5 text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"
-        >
-          취소
-        </button>
-      </div>
-    </form>
-  )
 }
 
 function TaskCard({ task, draggable, onDragStart, onClick }) {
@@ -160,27 +53,23 @@ function TaskCard({ task, draggable, onDragStart, onClick }) {
 
 function TaskBoardPage() {
   const { id: projectId } = useParams()
+  const navigate = useNavigate()
   const [project, setProject] = useState(null)
-  const [members, setMembers] = useState([])
   const [tasks, setTasks] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [showNewTask, setShowNewTask] = useState(false)
-  const [selectedTaskId, setSelectedTaskId] = useState(null)
   const [dragOverStatus, setDragOverStatus] = useState(null)
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       try {
-        const [projectData, memberData, taskData] = await Promise.all([
+        const [projectData, taskData] = await Promise.all([
           apiFetch(`/api/projects/${projectId}`),
-          apiFetch(`/api/projects/${projectId}/members`),
           apiFetch(`/api/projects/${projectId}/tasks`),
         ])
         if (cancelled) return
         setProject(projectData)
-        setMembers(memberData)
         setTasks(taskData)
       } catch (err) {
         if (!cancelled) setError(err.message)
@@ -193,8 +82,6 @@ function TaskBoardPage() {
     }
   }, [projectId])
 
-  const memberUsers = useMemo(() => members.map((m) => m.user), [members])
-
   const columns = useMemo(() => {
     const byStatus = new Map(TASK_STATUSES.map((s) => [s.value, []]))
     for (const task of tasks) {
@@ -206,20 +93,8 @@ function TaskBoardPage() {
     return byStatus
   }, [tasks])
 
-  const selectedTask = tasks.find((t) => t.id === selectedTaskId) || null
-
-  const createTask = async (data) => {
-    const task = await apiFetch(`/api/projects/${projectId}/tasks`, { method: 'POST', body: data })
-    setTasks((current) => [...current, task])
-  }
-
   const replaceTask = (updated) => {
     setTasks((current) => current.map((t) => (t.id === updated.id ? updated : t)))
-  }
-
-  const removeTask = (id) => {
-    setTasks((current) => current.filter((t) => t.id !== id))
-    setSelectedTaskId(null)
   }
 
   const moveTask = async (taskId, status) => {
@@ -250,19 +125,15 @@ function TaskBoardPage() {
           </Link>
           <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{project?.name} 칸반 보드</h2>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowNewTask((v) => !v)}
+        <Link
+          to={`/projects/${projectId}/tasks/new`}
           className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
         >
           새 일감
-        </button>
+        </Link>
       </div>
 
       {error && <p className="mb-3 text-sm text-red-600 dark:text-red-400">{error}</p>}
-      {showNewTask && (
-        <NewTaskForm members={memberUsers} onCreate={createTask} onClose={() => setShowNewTask(false)} />
-      )}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {TASK_STATUSES.map((col) => (
@@ -293,25 +164,13 @@ function TaskBoardPage() {
                   task={task}
                   draggable={task.canModify}
                   onDragStart={(e) => e.dataTransfer.setData('text/plain', task.id)}
-                  onClick={() => setSelectedTaskId(task.id)}
+                  onClick={() => navigate(`/projects/${projectId}/tasks/${task.id}`)}
                 />
               ))}
             </ul>
           </div>
         ))}
       </div>
-
-      {selectedTask && (
-        <TaskDetailPanel
-          projectId={projectId}
-          task={selectedTask}
-          projectMembers={memberUsers}
-          project={project}
-          onClose={() => setSelectedTaskId(null)}
-          onSaved={replaceTask}
-          onDeleted={removeTask}
-        />
-      )}
     </div>
   )
 }

@@ -6,10 +6,15 @@ import { Avatar } from './ProjectMembers'
 const MENTION_SCHEME = 'mention:'
 
 // react-markdown sanitizes URLs by default and only allows a fixed protocol
-// allowlist (http/https/mailto/...) — our custom `mention:` scheme gets
-// silently blanked out unless explicitly let through here.
-function allowMentionScheme(url) {
-  return url.startsWith(MENTION_SCHEME) ? url : defaultUrlTransform(url)
+// allowlist (http/https/mailto/...) — our custom `mention:` scheme isn't on
+// it, so it gets silently blanked out unless let through here. `data:` (how
+// MarkdownEditor embeds uploaded images) is let through too, but only for
+// `<img src>` — never for `<a href>`, where a `data:text/html,<script>...`
+// link would render as a clickable, viewer-executable payload.
+function allowMentionAndDataUrls(url, key, node) {
+  if (url.startsWith(MENTION_SCHEME)) return url
+  if (url.startsWith('data:') && node?.tagName === 'img') return url
+  return defaultUrlTransform(url)
 }
 
 // Read-only renderer, deliberately separate from MarkdownEditor — MDXEditor's
@@ -39,9 +44,10 @@ function MarkdownContent({ text, mentionUsersById }) {
     <div className="text-sm text-gray-800 dark:text-gray-200">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        urlTransform={allowMentionScheme}
+        urlTransform={allowMentionAndDataUrls}
         components={{
           a: (props) => <MarkdownLink {...props} mentionUsersById={mentionUsersById} />,
+          img: ({ src, alt }) => <img src={src} alt={alt} className="mb-2 max-w-full rounded-md last:mb-0" />,
           p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
           ul: ({ children }) => <ul className="mb-2 list-disc pl-5 last:mb-0">{children}</ul>,
           ol: ({ children }) => <ol className="mb-2 list-decimal pl-5 last:mb-0">{children}</ol>,

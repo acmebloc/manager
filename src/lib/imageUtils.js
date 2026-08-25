@@ -1,8 +1,10 @@
 const MAX_AVATAR_SIZE = 256
 
-// Downscales a user-picked image file to a small square-ish JPEG data URL so
-// it stays cheap to keep in the encrypted local profile store.
-export function resizeImageFile(file) {
+// Downscales a user-picked image file to a JPEG data URL so it stays cheap to
+// keep inline — as the encrypted local profile store (avatar, maxSize
+// defaults to MAX_AVATAR_SIZE) or, at a larger maxSize, as a markdown image
+// embedded directly in task/comment text (see MarkdownEditor.jsx).
+export function resizeImageFile(file, maxSize = MAX_AVATAR_SIZE) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onerror = () => reject(reader.error)
@@ -10,7 +12,7 @@ export function resizeImageFile(file) {
       const img = new Image()
       img.onerror = () => reject(new Error('이미지를 불러올 수 없습니다.'))
       img.onload = () => {
-        const scale = Math.min(1, MAX_AVATAR_SIZE / Math.max(img.width, img.height))
+        const scale = Math.min(1, maxSize / Math.max(img.width, img.height))
         const width = Math.round(img.width * scale)
         const height = Math.round(img.height * scale)
         const canvas = document.createElement('canvas')

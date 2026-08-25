@@ -17,6 +17,7 @@ import MyPage from './pages/MyPage.jsx'
 import ProjectsPage from './pages/ProjectsPage.jsx'
 import SchedulePage from './pages/SchedulePage.jsx'
 import TaskBoardPage from './pages/TaskBoardPage.jsx'
+import TaskFormPage from './pages/TaskFormPage.jsx'
 import TasksPage from './pages/TasksPage.jsx'
 
 createRoot(document.getElementById('root')).render(
@@ -28,6 +29,8 @@ createRoot(document.getElementById('root')).render(
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/:id/board" element={<TaskBoardPage />} />
+          <Route path="/projects/:id/tasks/new" element={<TaskFormPage />} />
+          <Route path="/projects/:id/tasks/:taskId" element={<TaskFormPage />} />
           <Route path="/tasks" element={<TasksPage />} />
           <Route path="/schedule" element={<SchedulePage />} />
           <Route path="/mypage" element={<MyPage />} />

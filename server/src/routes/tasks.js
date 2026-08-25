@@ -72,7 +72,27 @@ router.get('/', requireProjectRole('member'), async (req, res) => {
     include: taskInclude,
   })
   const memberIds = await currentMemberIds(req.params.projectId)
-  res.json(tasks.map((t) => decryptTask(t, memberIds, req.user, req.projectAccess)))
+  // The board never shows description, which can now embed base64 images —
+  // stripped here so a project full of illustrated tasks doesn't balloon
+  // every board load. GET /:id still returns it in full, for the task page.
+  res.json(
+    tasks.map((t) => {
+      const { description: _description, ...rest } = decryptTask(t, memberIds, req.user, req.projectAccess)
+      return rest
+    }),
+  )
+})
+
+// Standalone task page (TaskFormPage.jsx) needs to load one task directly —
+// a direct link or refresh can't rely on the board's already-fetched list.
+router.get('/:id', requireProjectRole('member'), async (req, res) => {
+  const task = await prisma.task.findFirst({
+    where: { id: req.params.id, projectId: req.params.projectId },
+    include: taskInclude,
+  })
+  if (!task) return res.status(404).json({ error: 'Not found' })
+  const memberIds = await currentMemberIds(req.params.projectId)
+  res.json(decryptTask(task, memberIds, req.user, req.projectAccess))
 })
 
 router.post('/', requireProjectRole('member'), async (req, res) => {

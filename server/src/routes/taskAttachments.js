@@ -79,7 +79,10 @@ router.post('/', requireProjectRole('member'), async (req, res) => {
     const attachment = await prisma.taskAttachment.create({
       data: {
         taskId: task.id,
-        fileName: req.file.originalname,
+        // multer/busboy decode multipart filenames as latin1 by default (the
+        // spec never mandated UTF-8), so a non-ASCII name arrives mangled
+        // unless re-decoded from the bytes it actually was.
+        fileName: Buffer.from(req.file.originalname, 'latin1').toString('utf8'),
         mimeType: req.file.mimetype,
         size: req.file.size,
         storageKey: req.file.filename,

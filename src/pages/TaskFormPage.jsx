@@ -1,0 +1,427 @@
+import { useEffect, useMemo, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+import { apiFetch } from '../lib/api'
+import { TASK_GRADES, TASK_STATUSES, TASK_TYPES } from '../lib/taskFields'
+import { Avatar } from '../components/ProjectMembers'
+import MarkdownContent from '../components/MarkdownContent'
+import MarkdownEditor from '../components/MarkdownEditor'
+import TaskAttachments from '../components/TaskAttachments'
+import TaskComments from '../components/TaskComments'
+
+const EMPTY_DRAFT = {
+  title: '',
+  description: '',
+  type: 'dev',
+  grade: 'minor',
+  status: 'todo',
+  assigneeId: '',
+  startAt: '',
+  endAt: '',
+}
+
+function toDateInputValue(value) {
+  return value ? value.slice(0, 10) : ''
+}
+
+function formatDate(value) {
+  if (!value) return null
+  return new Date(value).toLocaleDateString('ko-KR')
+}
+
+function draftFromTask(task) {
+  return {
+    title: task.title,
+    description: task.description || '',
+    type: task.type,
+    grade: task.grade,
+    status: task.status,
+    assigneeId: task.assigneeId || '',
+    startAt: toDateInputValue(task.startAt),
+    endAt: toDateInputValue(task.endAt),
+  }
+}
+
+// 새 담당자를 지정할 때는 프로젝트 멤버여야 하지만(서버가 강제), 이미 나간
+// 담당자를 그대로 유지하는 경우까지 select에서 사라지면 안 되므로(스펙 4.4)
+// 현재 담당자가 멤버 목록에 없어도 옵션에 끼워 넣는다.
+function buildAssigneeOptions(members, task) {
+  const options = [{ value: '', label: '미배정' }, ...members.map((m) => ({ value: m.id, label: m.name }))]
+  if (task?.assigneeId && task.assignee && !members.some((m) => m.id === task.assigneeId)) {
+    options.push({ value: task.assigneeId, label: `${task.assignee.name} (프로젝트 미참여)` })
+  }
+  return options
+}
+
+function TaskFormPage() {
+  const { id: projectId, taskId } = useParams()
+  const navigate = useNavigate()
+  const isNew = !taskId
+
+  const [project, setProject] = useState(null)
+  const [members, setMembers] = useState([])
+  const [task, setTask] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [editing, setEditing] = useState(isNew)
+  const [draft, setDraft] = useState(EMPTY_DRAFT)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const requests = [
+          apiFetch(`/api/projects/${projectId}`),
+          apiFetch(`/api/projects/${projectId}/members`),
+        ]
+        if (!isNew) requests.push(apiFetch(`/api/projects/${projectId}/tasks/${taskId}`))
+        const [projectData, memberData, taskData] = await Promise.all(requests)
+        if (cancelled) return
+        setProject(projectData)
+        setMembers(memberData)
+        if (taskData) {
+          setTask(taskData)
+          setDraft(draftFromTask(taskData))
+        }
+      } catch (err) {
+        if (!cancelled) setLoadError(err.message)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, taskId, isNew])
+
+  const memberUsers = useMemo(() => members.map((m) => m.user), [members])
+  const mentionUsersById = useMemo(() => new Map(memberUsers.map((m) => [m.id, m])), [memberUsers])
+  const assigneeOptions = useMemo(() => buildAssigneeOptions(memberUsers, task), [memberUsers, task])
+
+  const dateOutOfProjectRange = useMemo(() => {
+    if (!project) return false
+    const start = draft.startAt && project.startAt && draft.startAt < toDateInputValue(project.startAt)
+    const end = draft.endAt && project.endAt && draft.endAt > toDateInputValue(project.endAt)
+    return Boolean(start || end)
+  }, [draft, project])
+
+  const isDirty = useMemo(() => {
+    if (!editing) return false
+    const baseline = task ? draftFromTask(task) : EMPTY_DRAFT
+    return JSON.stringify(draft) !== JSON.stringify(baseline)
+  }, [editing, task, draft])
+
+  const goToBoard = () => navigate(`/projects/${projectId}/board`)
+
+  const requestGoToBoard = () => {
+    if (isDirty && !window.confirm('저장하지 않은 변경이 있습니다. 나갈까요?')) return
+    goToBoard()
+  }
+
+  const cancelEdit = () => {
+    if (isNew) {
+      goToBoard()
+      return
+    }
+    setDraft(draftFromTask(task))
+    setEditing(false)
+    setError('')
+  }
+
+  const save = async (event) => {
+    event.preventDefault()
+    if (draft.startAt && draft.endAt && draft.startAt > draft.endAt) {
+      setError('시작일은 종료일보다 늦을 수 없습니다')
+      return
+    }
+    setSaving(true)
+    try {
+      const body = {
+        title: draft.title.trim(),
+        description: draft.description.trim() || null,
+        type: draft.type,
+        grade: draft.grade,
+        assigneeId: draft.assigneeId || null,
+        startAt: draft.startAt || null,
+        endAt: draft.endAt || null,
+        ...(isNew ? {} : { status: draft.status }),
+      }
+      if (isNew) {
+        const created = await apiFetch(`/api/projects/${projectId}/tasks`, { method: 'POST', body })
+        // /tasks/new and /tasks/:taskId render the same component — set state
+        // before navigating so the transition never renders with `task` still
+        // null (isNew flips to false as soon as the URL changes, regardless
+        // of whether the navigation actually remounts this component).
+        setTask(created)
+        setDraft(draftFromTask(created))
+        setEditing(false)
+        navigate(`/projects/${projectId}/tasks/${created.id}`, { replace: true })
+      } else {
+        const updated = await apiFetch(`/api/projects/${projectId}/tasks/${taskId}`, { method: 'PATCH', body })
+        setTask(updated)
+        setEditing(false)
+      }
+      setError('')
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const remove = async () => {
+    if (!window.confirm('일감을 삭제할까요? 첨부파일과 댓글도 함께 삭제됩니다.')) return
+    try {
+      await apiFetch(`/api/projects/${projectId}/tasks/${taskId}`, { method: 'DELETE' })
+      goToBoard()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  if (loading) return null
+
+  if (loadError) {
+    return (
+      <div className="mx-auto w-full max-w-3xl px-4 py-8">
+        <p className="text-sm text-red-600 dark:text-red-400">{loadError}</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mx-auto w-full max-w-3xl px-4 py-8">
+      <button
+        type="button"
+        onClick={requestGoToBoard}
+        className="mb-4 inline-block text-xs text-gray-400 hover:text-gray-700 dark:hover:text-white"
+      >
+        ← {project?.name} 칸반 보드
+      </button>
+
+      {editing ? (
+        <form onSubmit={save} className="flex flex-col gap-3">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+            {isNew ? '새 일감' : '일감 수정'}
+          </h2>
+
+          <input
+            type="text"
+            value={draft.title}
+            onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
+            placeholder="제목"
+            autoFocus
+            className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+          />
+
+          <div className={`grid gap-2 ${isNew ? 'grid-cols-2' : 'grid-cols-3'}`}>
+            <label className="text-xs text-gray-500 dark:text-gray-400">
+              유형
+              <select
+                value={draft.type}
+                onChange={(e) => setDraft((d) => ({ ...d, type: e.target.value }))}
+                className="mt-1 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+              >
+                {TASK_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs text-gray-500 dark:text-gray-400">
+              등급
+              <select
+                value={draft.grade}
+                onChange={(e) => setDraft((d) => ({ ...d, grade: e.target.value }))}
+                className="mt-1 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+              >
+                {TASK_GRADES.map((g) => (
+                  <option key={g.value} value={g.value}>
+                    {g.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {!isNew && (
+              <label className="text-xs text-gray-500 dark:text-gray-400">
+                상태
+                <select
+                  value={draft.status}
+                  onChange={(e) => setDraft((d) => ({ ...d, status: e.target.value }))}
+                  className="mt-1 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+                >
+                  {TASK_STATUSES.map((s) => (
+                    <option key={s.value} value={s.value}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+
+          <label className="text-xs text-gray-500 dark:text-gray-400">
+            담당자
+            <select
+              value={draft.assigneeId}
+              onChange={(e) => setDraft((d) => ({ ...d, assigneeId: e.target.value }))}
+              className="mt-1 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+            >
+              {assigneeOptions.map((o) => (
+                <option key={o.value || 'none'} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="flex gap-2">
+            <label className="flex-1 text-xs text-gray-500 dark:text-gray-400">
+              시작일
+              <input
+                type="date"
+                value={draft.startAt}
+                onChange={(e) => setDraft((d) => ({ ...d, startAt: e.target.value }))}
+                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+              />
+            </label>
+            <label className="flex-1 text-xs text-gray-500 dark:text-gray-400">
+              종료일
+              <input
+                type="date"
+                value={draft.endAt}
+                onChange={(e) => setDraft((d) => ({ ...d, endAt: e.target.value }))}
+                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+              />
+            </label>
+            <div className="flex-1 text-xs text-gray-500 dark:text-gray-400">
+              등록일
+              <p className="mt-1 rounded-md border border-transparent px-3 py-1.5 text-sm text-gray-500 dark:text-gray-400">
+                {isNew ? formatDate(new Date().toISOString()) : formatDate(task.createdAt)}
+              </p>
+            </div>
+          </div>
+          {dateOutOfProjectRange && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              프로젝트 기간을 벗어난 날짜예요. 저장은 막지 않지만 확인해 주세요.
+            </p>
+          )}
+
+          <label className="text-xs text-gray-500 dark:text-gray-400">
+            본문
+            <div className="mt-1">
+              <MarkdownEditor
+                value={draft.description}
+                onChange={(md) => setDraft((d) => ({ ...d, description: md }))}
+                mentionMembers={memberUsers}
+                mentionUsersById={mentionUsersById}
+                placeholder="본문을 입력하세요"
+              />
+            </div>
+          </label>
+
+          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={saving || !draft.title.trim()}
+              className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {saving ? '저장 중...' : isNew ? '만들기' : '저장'}
+            </button>
+            <button
+              type="button"
+              onClick={cancelEdit}
+              className="rounded-md px-3 py-1.5 text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"
+            >
+              취소
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div className="flex flex-col gap-3">
+          <div className="flex items-start justify-between gap-2">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{task.title}</h2>
+            <div className="flex shrink-0 gap-2">
+              {task.canModify && (
+                <button
+                  type="button"
+                  onClick={() => setEditing(true)}
+                  className="text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"
+                >
+                  수정
+                </button>
+              )}
+              {task.canDelete && (
+                <button type="button" onClick={remove} className="text-sm text-red-600 hover:text-red-500 dark:text-red-400">
+                  삭제
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2 text-xs">
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+              {TASK_TYPES.find((t) => t.value === task.type)?.label}
+            </span>
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+              {TASK_GRADES.find((g) => g.value === task.grade)?.label}
+            </span>
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+              {TASK_STATUSES.find((s) => s.value === task.status)?.label}
+            </span>
+          </div>
+
+          {task.description && <MarkdownContent text={task.description} mentionUsersById={mentionUsersById} />}
+
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs text-gray-500 dark:text-gray-400">
+            <div>
+              <dt className="mb-1">담당자</dt>
+              <dd className="flex items-center gap-1.5">
+                {task.assignee ? (
+                  <span className={`flex items-center gap-1.5 ${!task.assigneeIsMember ? 'opacity-50' : ''}`}>
+                    <Avatar user={task.assignee} />
+                    {task.assignee.name}
+                    {!task.assigneeIsMember && ' (프로젝트 미참여)'}
+                  </span>
+                ) : (
+                  '미배정'
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt className="mb-1">등록자</dt>
+              <dd>{task.createdBy?.name || '등록자 미상'}</dd>
+            </div>
+            <div>
+              <dt className="mb-1">시작일 ~ 종료일</dt>
+              <dd>
+                {formatDate(task.startAt) || '?'} ~ {formatDate(task.endAt) || '?'}
+              </dd>
+            </div>
+            <div>
+              <dt className="mb-1">등록일</dt>
+              <dd>{formatDate(task.createdAt)}</dd>
+            </div>
+          </dl>
+
+          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+        </div>
+      )}
+
+      {!isNew && (
+        <>
+          <hr className="my-4 border-gray-100 dark:border-gray-800" />
+          <div className="mb-4">
+            <TaskAttachments projectId={projectId} taskId={taskId} canModify={task.canModify} />
+          </div>
+          <TaskComments projectId={projectId} taskId={taskId} members={memberUsers} />
+        </>
+      )}
+    </div>
+  )
+}
+
+export default TaskFormPage

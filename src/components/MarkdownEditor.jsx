@@ -3,10 +3,12 @@ import {
   BlockTypeSelect,
   BoldItalicUnderlineToggles,
   CreateLink,
+  InsertImage,
   ListsToggle,
   MDXEditor,
   UndoRedo,
   headingsPlugin,
+  imagePlugin,
   linkDialogPlugin,
   linkPlugin,
   listsPlugin,
@@ -17,7 +19,12 @@ import {
 } from '@mdxeditor/editor'
 import { typeaheadPlugin } from '@mdxeditor/typeahead-plugin'
 import { matchesKoreanQuery } from '../lib/korean'
+import { resizeImageFile } from '../lib/imageUtils'
 import { Avatar } from './ProjectMembers'
+
+// Bigger than the 256px avatar target — these are content images (screenshots,
+// mockups), not thumbnails.
+const CONTENT_IMAGE_MAX_SIZE = 1600
 
 // This app has no manual dark-mode toggle — it follows the OS preference via
 // prefers-color-scheme (Tailwind v4 default, no `dark` class strategy
@@ -70,9 +77,8 @@ function mentionConfig(mentionMembers, mentionUsersById) {
   }
 }
 
-// Shared editing surface for task descriptions and comments. `mentionMembers`
-// is omitted for task descriptions (mentions are a comment-only feature,
-// spec §6) and provided for comments to enable the @ typeahead.
+// Shared editing surface for task descriptions and comments — both support
+// @mentions and inline images (see mentionConfig above and imagePlugin below).
 function MarkdownEditor({ value, onChange, mentionMembers, mentionUsersById, placeholder }) {
   const dark = usePrefersDark()
 
@@ -84,6 +90,12 @@ function MarkdownEditor({ value, onChange, mentionMembers, mentionUsersById, pla
       thematicBreakPlugin(),
       linkPlugin(),
       linkDialogPlugin(),
+      // Images are embedded as base64 data URLs (imageUploadHandler resolves
+      // to the string that becomes the markdown image's src) — same pattern
+      // as the user's own avatar (src/lib/imageUtils.js), so no server
+      // endpoint or auth-gated serving is needed. Trades off larger stored
+      // text for zero extra infrastructure.
+      imagePlugin({ imageUploadHandler: (file) => resizeImageFile(file, CONTENT_IMAGE_MAX_SIZE) }),
       markdownShortcutPlugin(),
       toolbarPlugin({
         toolbarContents: () => (
@@ -93,6 +105,7 @@ function MarkdownEditor({ value, onChange, mentionMembers, mentionUsersById, pla
             <ListsToggle />
             <BlockTypeSelect />
             <CreateLink />
+            <InsertImage />
           </>
         ),
       }),
