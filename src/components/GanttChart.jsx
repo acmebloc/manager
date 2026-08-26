@@ -1,5 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ROW_HEIGHT, ZOOM_LEVELS, buildTicks, totalWidth, todayX, barGeometry, zoomIn, zoomOut } from '../lib/ganttDates'
+import {
+  ROW_HEIGHT,
+  ZOOM_LEVELS,
+  buildTicks,
+  totalWidth,
+  todayX,
+  barGeometry,
+  groupIntoRows,
+  zoomIn,
+  zoomOut,
+} from '../lib/ganttDates'
 
 const LABEL_WIDTH = 200
 const ZOOM_LABEL = { day: '일', week: '주', month: '월' }
@@ -47,6 +57,7 @@ function GanttChart({
     return () => window.removeEventListener('keydown', handler)
   }, [])
 
+  const rows = useMemo(() => groupIntoRows(items), [items])
   const ticks = useMemo(() => buildTicks(range, zoom), [range, zoom])
   const chartWidth = useMemo(() => totalWidth(range, zoom), [range, zoom])
   const todayLeft = useMemo(() => todayX(range, zoom), [range, zoom])
@@ -151,32 +162,35 @@ function GanttChart({
               </div>
             </div>
 
-            {/* 행 */}
-            {items.map((item) => {
-              const bar = barGeometry(item, range, zoom)
-              return (
-                <div key={item.id} className="flex border-b border-gray-100 last:border-b-0 dark:border-gray-800">
-                  <div
-                    className="sticky left-0 z-[2] w-[200px] shrink-0 truncate border-r border-gray-200 bg-white px-3 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
-                    style={{ height: ROW_HEIGHT, lineHeight: `${ROW_HEIGHT}px` }}
-                    title={item.title}
-                  >
-                    {item.title}
-                  </div>
-                  <div className="relative" style={{ width: chartWidth, height: ROW_HEIGHT }}>
-                    <button
-                      type="button"
-                      onClick={() => onBarClick(item)}
-                      title={barTitleFor(item)}
-                      className={`absolute top-1.5 truncate rounded px-2 text-left text-xs font-medium text-white ${barClassFor(item)}`}
-                      style={{ left: bar.left, width: Math.max(bar.width, 8), height: ROW_HEIGHT - 12 }}
-                    >
-                      {item.title}
-                    </button>
-                  </div>
+            {/* 행 — 반복 일정은 같은 시리즈 회차 전부가 한 행에 막대 여러 개로 모임 */}
+            {rows.map((row) => (
+              <div key={row.key} className="flex border-b border-gray-100 last:border-b-0 dark:border-gray-800">
+                <div
+                  className="sticky left-0 z-[2] w-[200px] shrink-0 truncate border-r border-gray-200 bg-white px-3 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+                  style={{ height: ROW_HEIGHT, lineHeight: `${ROW_HEIGHT}px` }}
+                  title={row.title}
+                >
+                  {row.title}
                 </div>
-              )
-            })}
+                <div className="relative" style={{ width: chartWidth, height: ROW_HEIGHT }}>
+                  {row.bars.map((bar) => {
+                    const geometry = barGeometry(bar, range, zoom)
+                    return (
+                      <button
+                        key={bar.id}
+                        type="button"
+                        onClick={() => onBarClick(bar)}
+                        title={barTitleFor(bar)}
+                        className={`absolute top-1.5 truncate rounded px-2 text-left text-xs font-medium text-white ${barClassFor(bar)}`}
+                        style={{ left: geometry.left, width: Math.max(geometry.width, 8), height: ROW_HEIGHT - 12 }}
+                      >
+                        {bar.title}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}

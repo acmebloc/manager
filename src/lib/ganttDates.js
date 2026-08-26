@@ -104,6 +104,30 @@ export function barGeometry(item, range, zoom) {
   return { left, width }
 }
 
+// 반복 일정의 회차들은 "한 일정이 여러 번 나타나는 것"이지 별개의 일정이
+// 아니므로, 같은 시리즈(scheduleId)의 회차는 한 행에 막대 여러 개로 모아
+// 보여준다 — 반복이 아닌 항목은 지금처럼 각자 한 행. 목록이 이미 시작일
+// 오름차순으로 정렬돼 있으므로, 한 시리즈의 행 위치는 그 시리즈의 첫 회차가
+// 나온 자리를 그대로 따라간다(별도 재정렬 불필요).
+export function groupIntoRows(items) {
+  const rows = []
+  const rowByScheduleId = new Map()
+  for (const item of items) {
+    if (item.isRecurring && item.scheduleId) {
+      let row = rowByScheduleId.get(item.scheduleId)
+      if (!row) {
+        row = { key: item.scheduleId, title: item.seriesTitle || item.title, bars: [] }
+        rowByScheduleId.set(item.scheduleId, row)
+        rows.push(row)
+      }
+      row.bars.push(item)
+    } else {
+      rows.push({ key: item.id, title: item.title, bars: [item] })
+    }
+  }
+  return rows
+}
+
 // Header tick marks, grouped to match the current zoom level.
 export function buildTicks(range, zoom) {
   const px = pxPerDayFor(zoom)
