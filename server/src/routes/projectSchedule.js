@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
 import { requireProjectRole } from '../lib/projectAccess.js'
+import { expandOccurrences } from '../lib/scheduleRecurrence.js'
 
 // Mounted at /api/projects/:projectId/schedule — backs the project Gantt
 // chart (일정 메뉴). Merges two sources into one row list:
@@ -39,6 +40,9 @@ router.get('/', requireProjectRole('member'), async (req, res) => {
         title: true,
         startAt: true,
         endAt: true,
+        recurrenceIntervalWeeks: true,
+        recurrenceEndAt: true,
+        overrides: true,
         owner: { select: userSelect },
         followers: { select: { user: { select: userSelect } } },
       },
@@ -67,16 +71,21 @@ router.get('/', requireProjectRole('member'), async (req, res) => {
     }
   })
 
-  const otherItems = schedules.map((s) => ({
-    source: 'other',
-    id: s.id,
-    title: s.title,
-    startAt: s.startAt,
-    endAt: s.endAt,
-    hasDates: true,
-    owner: decryptUser(s.owner),
-    followers: s.followers.map((f) => decryptUser(f.user)),
-  }))
+  const otherItems = schedules.flatMap((s) =>
+    expandOccurrences({
+      source: 'other',
+      id: s.id,
+      title: s.title,
+      startAt: s.startAt,
+      endAt: s.endAt,
+      hasDates: true,
+      recurrenceIntervalWeeks: s.recurrenceIntervalWeeks,
+      recurrenceEndAt: s.recurrenceEndAt,
+      overrides: s.overrides,
+      owner: decryptUser(s.owner),
+      followers: s.followers.map((f) => decryptUser(f.user)),
+    }),
+  )
 
   // 날짜 있는 항목 먼저(실제 시작일 오름차순), 없는 항목은 전부 맨 아래에
   // 등록일 오름차순으로 (스펙 규칙 6/7 — 날짜가 생기는 순간 다음 조회에서

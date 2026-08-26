@@ -203,11 +203,38 @@ model Schedule {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
+  // 반복 규칙 — 둘 다 있으면 이 레코드는 "시리즈 정의"고, 실제 화면에 뜨는
+  // 회차들은 저장되지 않고 매 조회마다 startAt을 intervalWeeks*7일씩 밀며
+  // 계산된다(server/src/lib/scheduleRecurrence.js). 회차 하나만 따로
+  // 수정/삭제된 경우만 ScheduleOccurrenceOverride로 예외를 둔다.
+  recurrenceIntervalWeeks Int?
+  recurrenceEndAt         DateTime?
+
   followers ScheduleFollower[]
+  overrides ScheduleOccurrenceOverride[]
 }
 
-// 일정의 "참조자" — 팔로우업 해야 하는 사람들. 프로젝트 일정에서만 의미가 있고
-// (개인 일정은 태깅 UI 자체가 없음), TaskCommentMention과 동일한 조인 테이블 패턴.
+// 반복 시리즈의 특정 회차 하나만 다른 날짜/제목으로 바뀌었거나(override) 통째로
+// 건너뛰기(deleted=true, "이 회차만 삭제")된 경우에만 존재하는 예외 레코드.
+// 참조자는 회차별로 나뉘지 않고 항상 시리즈(Schedule.followers)를 그대로 따른다.
+model ScheduleOccurrenceOverride {
+  id              String    @id @default(cuid())
+  scheduleId      String
+  schedule        Schedule  @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  occurrenceIndex Int
+  deleted         Boolean   @default(false)
+  title           String?
+  startAt         DateTime?
+  endAt           DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([scheduleId, occurrenceIndex])
+}
+
+// 일정의 "참조자" — 팔로우업 해야 하는 사람들. 프로젝트 일정은 프로젝트 멤버
+// 중에서, 개인 일정은 전체 사용자 중에서 고른다. TaskCommentMention과 동일한
+// 조인 테이블 패턴.
 model ScheduleFollower {
   id         String   @id @default(cuid())
   scheduleId String

@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
 import { getProjectAccess } from '../lib/projectAccess.js'
+import { clampRecurrenceEndAt, expandOccurrences, isValidRecurrenceInterval } from '../lib/scheduleRecurrence.js'
 import { assertDateOrder } from '../lib/taskFields.js'
 
 const router = Router()
@@ -12,6 +13,7 @@ const scheduleInclude = {
   owner: { select: userSelect },
   project: { select: { id: true, name: true } },
   followers: { select: { user: { select: userSelect } } },
+  overrides: true,
 }
 
 function decryptSchedule(schedule) {
@@ -108,7 +110,9 @@ router.get('/', async (req, res) => {
       include: scheduleInclude,
     })
     return res.json(
-      schedules.map((s) => ({ ...decryptSchedule(s), canModify: s.ownerId === req.user.id })),
+      schedules
+        .map((s) => ({ ...decryptSchedule(s), canModify: s.ownerId === req.user.id }))
+        .flatMap(expandOccurrences),
     )
   }
 
@@ -120,7 +124,7 @@ router.get('/', async (req, res) => {
       orderBy: { startAt: 'asc' },
       include: scheduleInclude,
     })
-    return res.json(schedules.map(decryptSchedule))
+    return res.json(schedules.map(decryptSchedule).flatMap(expandOccurrences))
   }
 
   const projectIds = await memberProjectIds(req.user.id)
@@ -136,11 +140,31 @@ router.get('/', async (req, res) => {
     orderBy: { startAt: 'asc' },
     include: scheduleInclude,
   })
-  res.json(schedules.map(decryptSchedule))
+  res.json(schedules.map(decryptSchedule).flatMap(expandOccurrences))
 })
 
+// recurrence: { intervalWeeks: 1|2|3|4, endAt } — validates the interval and
+// clamps endAt to the 52-week safety cap (clampRecurrenceEndAt). Returns
+// null (not recurring) or { recurrenceIntervalWeeks, recurrenceEndAt } to
+// spread into the create/update data, or a string error message.
+function parseRecurrence(recurrence, startAt) {
+  if (!recurrence) return { data: { recurrenceIntervalWeeks: null, recurrenceEndAt: null } }
+  if (!isValidRecurrenceInterval(recurrence.intervalWeeks)) {
+    return { error: 'recurrence.intervalWeeks must be 1, 2, 3, or 4' }
+  }
+  if (!recurrence.endAt) return { error: 'recurrence.endAt is required' }
+  const dateProblem = assertDateOrder(startAt, recurrence.endAt)
+  if (dateProblem) return { error: dateProblem }
+  return {
+    data: {
+      recurrenceIntervalWeeks: recurrence.intervalWeeks,
+      recurrenceEndAt: clampRecurrenceEndAt(startAt, recurrence.endAt),
+    },
+  }
+}
+
 router.post('/', async (req, res) => {
-  const { title, startAt, endAt, projectId, followerIds = [] } = req.body
+  const { title, startAt, endAt, projectId, followerIds = [], recurrence } = req.body
   if (!title || !startAt) {
     return res.status(400).json({ error: 'title and startAt are required' })
   }
@@ -152,6 +176,9 @@ router.post('/', async (req, res) => {
   }
   const dateProblem = assertDateOrder(startAt, endAt)
   if (dateProblem) return res.status(400).json({ error: dateProblem })
+
+  const recurrenceResult = parseRecurrence(recurrence, startAt)
+  if (recurrenceResult.error) return res.status(400).json({ error: recurrenceResult.error })
 
   // Attaching a schedule to a project shares it with that project's
   // members, so the caller has to be one of them. Every project role can
@@ -172,6 +199,7 @@ router.post('/', async (req, res) => {
       endAt: endAt ? new Date(endAt) : null,
       projectId: projectId || null,
       ownerId: req.user.id,
+      ...recurrenceResult.data,
     },
   })
   if (followerIds.length > 0) await setFollowers(schedule.id, followerIds)
@@ -193,7 +221,7 @@ router.patch('/:id', async (req, res) => {
     return res.status(404).json({ error: 'Not found' })
   }
 
-  const { title, startAt, endAt, projectId, followerIds } = req.body
+  const { title, startAt, endAt, projectId, followerIds, recurrence } = req.body
   const nextProjectId = projectId !== undefined ? projectId || null : existing.projectId
   const nextStartAt = startAt !== undefined ? startAt : existing.startAt
   const nextEndAt = endAt !== undefined ? endAt : existing.endAt
@@ -202,6 +230,16 @@ router.patch('/:id', async (req, res) => {
   }
   const dateProblem = assertDateOrder(nextStartAt, nextEndAt)
   if (dateProblem) return res.status(400).json({ error: dateProblem })
+
+  // "전체 반복 일정 수정" — 시리즈 규칙 자체를 바꾼다(또는 recurrence:null로
+  // 반복을 해제한다). 이미 개별적으로 수정/삭제된 회차(override)는 그대로
+  // 유지된다 — 다음 조회에서도 override가 우선하므로 여기서 손댈 필요 없음.
+  let recurrenceData
+  if (recurrence !== undefined) {
+    const recurrenceResult = parseRecurrence(recurrence, nextStartAt)
+    if (recurrenceResult.error) return res.status(400).json({ error: recurrenceResult.error })
+    recurrenceData = recurrenceResult.data
+  }
 
   if (nextProjectId) {
     const access = await getProjectAccess(nextProjectId, req.user)
@@ -221,12 +259,71 @@ router.patch('/:id', async (req, res) => {
       ...(startAt !== undefined && { startAt: new Date(startAt) }),
       ...(endAt !== undefined && { endAt: endAt ? new Date(endAt) : null }),
       ...(projectId !== undefined && { projectId: projectId || null }),
+      ...recurrenceData,
     },
   })
   if (followerIds !== undefined) await setFollowers(req.params.id, followerIds)
 
   const schedule = await prisma.schedule.findUnique({ where: { id: req.params.id }, include: scheduleInclude })
   res.json(decryptSchedule(schedule))
+})
+
+function parseOccurrenceIndex(raw) {
+  const index = Number(raw)
+  return Number.isInteger(index) && index >= 0 ? index : null
+}
+
+// "이 회차만 수정" — 시리즈 규칙(root)은 그대로 두고, 이 회차 하나만 다른
+// 제목/날짜를 쓰도록 예외를 만들거나 갱신한다. 참조자는 회차별로 나뉘지
+// 않고 항상 시리즈를 따르므로 여기서 다루지 않는다. 권한은 "전체 수정"과
+// 동일 — 시리즈(root)를 고칠 수 있는 사람이면 회차 하나도 고칠 수 있다.
+router.patch('/:id/occurrences/:index', async (req, res) => {
+  const existing = await prisma.schedule.findUnique({ where: { id: req.params.id } })
+  if (!existing || !existing.recurrenceIntervalWeeks) return res.status(404).json({ error: 'Not found' })
+  if (!(await canModifySchedule(existing, req.user))) return res.status(404).json({ error: 'Not found' })
+
+  const occurrenceIndex = parseOccurrenceIndex(req.params.index)
+  if (occurrenceIndex === null) return res.status(400).json({ error: 'Invalid occurrence index' })
+
+  const { title, startAt, endAt } = req.body
+  if (!title || !startAt) return res.status(400).json({ error: 'title and startAt are required' })
+  const dateProblem = assertDateOrder(startAt, endAt)
+  if (dateProblem) return res.status(400).json({ error: dateProblem })
+
+  const overrideData = {
+    title,
+    startAt: new Date(startAt),
+    endAt: endAt ? new Date(endAt) : null,
+    deleted: false,
+  }
+  await prisma.scheduleOccurrenceOverride.upsert({
+    where: { scheduleId_occurrenceIndex: { scheduleId: req.params.id, occurrenceIndex } },
+    create: { scheduleId: req.params.id, occurrenceIndex, ...overrideData },
+    update: overrideData,
+  })
+
+  const schedule = await prisma.schedule.findUnique({ where: { id: req.params.id }, include: scheduleInclude })
+  const item = expandOccurrences(decryptSchedule(schedule)).find((i) => i.occurrenceIndex === occurrenceIndex)
+  res.json(item)
+})
+
+// "이 회차만 삭제" — override를 deleted=true로 남겨 이 회차만 건너뛴다.
+// 시리즈의 다른 회차나 "전체 삭제"(아래, root 자체를 지우는 것)에는
+// 영향 없다.
+router.delete('/:id/occurrences/:index', async (req, res) => {
+  const existing = await prisma.schedule.findUnique({ where: { id: req.params.id } })
+  if (!existing || !existing.recurrenceIntervalWeeks) return res.status(404).json({ error: 'Not found' })
+  if (!(await canModifySchedule(existing, req.user))) return res.status(404).json({ error: 'Not found' })
+
+  const occurrenceIndex = parseOccurrenceIndex(req.params.index)
+  if (occurrenceIndex === null) return res.status(400).json({ error: 'Invalid occurrence index' })
+
+  await prisma.scheduleOccurrenceOverride.upsert({
+    where: { scheduleId_occurrenceIndex: { scheduleId: req.params.id, occurrenceIndex } },
+    create: { scheduleId: req.params.id, occurrenceIndex, deleted: true },
+    update: { deleted: true },
+  })
+  res.status(204).end()
 })
 
 router.delete('/:id', async (req, res) => {
