@@ -274,5 +274,10 @@ sudo -u manager npm install && sudo -u manager npm run build   # 프론트 변�
 cd server
 sudo -u manager npm install                     # 의존성 변경 시
 sudo -u manager npx prisma migrate deploy       # 스키마 변경 시
+sudo -u manager npx prisma generate             # 스키마 변경 시 — 반드시 migrate deploy 다음에.
+                                                 # postinstall이 막혀 있어 npm install만으론
+                                                 # Prisma Client가 새 모델/필드를 모른 채로 남는다
+                                                 # (2026-08-26: 이걸 빠뜨려서 배포 직후 API가
+                                                 # 전부 조용히 실패한 적 있음)
 sudo -u manager pm2 restart manager-api
 ```
