@@ -1,15 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
 import { apiFetch } from '../lib/api'
 
-// 'member' works tasks/schedules like everyone else; 'pl' can also invite
-// and remove members (always as plain 'member'); 'pm' can also edit/delete
-// the project and set anyone's role. A project must always keep at least
-// one 'pm' — the UI disables the controls that would drop the last one, the
-// server rejects it either way.
+// 'plan'/'design'/'dev'/'other' all work tasks/schedules the same way (the
+// old single 'member' tier, split by job function); 'pl' can also invite
+// and remove members (always at one of those four); 'pm' can also
+// edit/delete the project and set anyone's role. A project must always keep
+// at least one 'pm' — the UI disables the controls that would drop the last
+// one, the server rejects it either way.
 export const ROLES = [
   { value: 'pm', label: 'PM' },
   { value: 'pl', label: 'PL' },
-  { value: 'member', label: '멤버' },
+  { value: 'plan', label: '기획' },
+  { value: 'design', label: '디자인' },
+  { value: 'dev', label: '개발' },
+  { value: 'other', label: '기타' },
 ]
 
 export function roleLabel(role) {
@@ -62,6 +66,47 @@ export function Avatar({ user }) {
     // force the paragraph to close early.
     <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-200 text-xs font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-300">
       {(user?.name || '?').slice(0, 1)}
+    </span>
+  )
+}
+
+// Avatar + name that reveals the person's email (with a copy button) on
+// hover — used on the project detail page for PM/PL/멤버 rows (spec 4.5).
+// Deliberately not a native `title` tooltip: a copy button has to be
+// clickable, which a title tooltip can't host.
+export function MemberIdentity({ user, className = '' }) {
+  const [copied, setCopied] = useState(false)
+
+  const copyEmail = async (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (!user?.email) return
+    try {
+      await navigator.clipboard.writeText(user.email)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // Clipboard permission denied/unavailable — nothing sensible to fall
+      // back to, so this just silently doesn't copy.
+    }
+  }
+
+  return (
+    <span className={`group relative inline-flex items-center gap-1.5 ${className}`}>
+      <Avatar user={user} />
+      <span className="text-sm text-gray-900 dark:text-white">{user?.name}</span>
+      {user?.email && (
+        <span className="pointer-events-none absolute left-0 top-full z-10 mt-1 hidden items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-200 bg-white px-2 py-1 text-xs shadow-lg group-hover:pointer-events-auto group-hover:flex dark:border-gray-700 dark:bg-gray-800">
+          <span className="text-gray-600 dark:text-gray-300">{user.email}</span>
+          <button
+            type="button"
+            onClick={copyEmail}
+            className="shrink-0 rounded px-1.5 py-0.5 text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
+          >
+            {copied ? '복사됨' : '복사'}
+          </button>
+        </span>
+      )}
     </span>
   )
 }
@@ -131,10 +176,13 @@ export function UserSearch({ excludeUserIds, onPick, placeholder = '이름 또�
   )
 }
 
-// A PM can invite at any level; a PL can only bring people in as plain
-// members — assigning pm/pl is a 'grade' action reserved for PMs.
-function AddMember({ members, canAssignRoles, onAdd }) {
-  const [role, setRole] = useState('member')
+// A PM can invite at any level (PM/PL/기획/디자인/개발/기타); a PL can only
+// bring people in at one of the four member-tier roles — assigning pm/pl is
+// a 'grade' action reserved for PMs.
+function AddMember({ members, myRole, onAdd }) {
+  const canAssignRoles = myRole === 'pm'
+  const invitableRoles = canAssignRoles ? ROLES : ROLES.filter((r) => r.value !== 'pm' && r.value !== 'pl')
+  const [role, setRole] = useState('other')
   const existing = new Set(members.map((m) => m.userId))
 
   return (
@@ -143,22 +191,20 @@ function AddMember({ members, canAssignRoles, onAdd }) {
         <div className="flex-1">
           <UserSearch excludeUserIds={existing} onPick={(user) => onAdd(user, role)} />
         </div>
-        {canAssignRoles && (
-          <select
-            value={role}
-            onChange={(event) => setRole(event.target.value)}
-            className="h-fit rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-          >
-            {ROLES.map((r) => (
-              <option key={r.value} value={r.value}>
-                {r.label}
-              </option>
-            ))}
-          </select>
-        )}
+        <select
+          value={role}
+          onChange={(event) => setRole(event.target.value)}
+          className="h-fit rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+        >
+          {invitableRoles.map((r) => (
+            <option key={r.value} value={r.value}>
+              {r.label}
+            </option>
+          ))}
+        </select>
       </div>
       {!canAssignRoles && (
-        <p className="text-xs text-gray-400 dark:text-gray-500">PL은 멤버 등급으로만 초대할 수 있어요</p>
+        <p className="text-xs text-gray-400 dark:text-gray-500">PL은 PM/PL 등급으로는 초대할 수 없어요</p>
       )}
     </div>
   )
@@ -298,9 +344,7 @@ function ProjectMembers({
         })}
       </ul>
 
-      {canInviteOrRemove && (
-        <AddMember members={members} canAssignRoles={canAssignRoles} onAdd={add} />
-      )}
+      {canInviteOrRemove && <AddMember members={members} myRole={myRole} onAdd={add} />}
     </div>
   )
 }

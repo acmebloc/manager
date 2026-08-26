@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
-import { assertNotLastPm, isValidRole, requireProjectRole } from '../lib/projectAccess.js'
+import { assertNotLastPm, isValidRole, normalizeRole, requireProjectRole } from '../lib/projectAccess.js'
 import { deleteAttachmentFiles } from '../lib/uploads.js'
 
 const router = Router()
@@ -14,12 +14,13 @@ const memberSelect = {
 }
 
 function decryptMember(member) {
-  return { ...member, user: decryptUser(member.user) }
+  return { ...member, role: normalizeRole(member.role), user: decryptUser(member.user) }
 }
 
 function myRoleFor(project, user) {
   if (user.isSiteAdmin) return 'pm'
-  return project.members.find((m) => m.userId === user.id)?.role ?? null
+  const role = project.members.find((m) => m.userId === user.id)?.role
+  return role ? normalizeRole(role) : null
 }
 
 // The site admin sees every project site-wide; everyone else only sees
@@ -144,14 +145,14 @@ router.get('/:id/members', requireProjectRole('member'), async (req, res) => {
 })
 
 router.post('/:id/members', requireProjectRole('pl'), async (req, res) => {
-  const { userId, role = 'member' } = req.body
+  const { userId, role = 'other' } = req.body
   if (!userId) return res.status(400).json({ error: 'userId is required' })
   if (!isValidRole(role)) return res.status(400).json({ error: 'Invalid role' })
 
   // Assigning pm/pl ("등급 부여") is a PM-only power — a PL can only invite
-  // people in as plain members.
-  if (req.projectAccess.role === 'pl' && role !== 'member') {
-    return res.status(403).json({ error: 'PL은 멤버 등급으로만 초대할 수 있습니다' })
+  // people in at one of the four member-tier roles (plan/design/dev/other).
+  if (req.projectAccess.role === 'pl' && (role === 'pm' || role === 'pl')) {
+    return res.status(403).json({ error: 'PL은 PM/PL 등급으로 초대할 수 없습니다' })
   }
 
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } })

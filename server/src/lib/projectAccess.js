@@ -1,13 +1,31 @@
 import { prisma } from '../db.js'
 
-// 'member' works tasks/schedules like everyone else; 'pl' can also invite
-// and remove members (always as plain 'member'); 'pm' can also edit/delete
-// the project and set anyone's role. Ranked so a check can ask for a minimum.
-export const ROLES = ['member', 'pl', 'pm']
-const RANK = { member: 1, pl: 2, pm: 3 }
+// 'plan'/'design'/'dev'/'other' all work tasks/schedules the same way (the
+// old single 'member' tier, split by job function — see ProjectMember.role
+// in schema.prisma); 'pl' can also invite and remove members (always at one
+// of those four); 'pm' can also edit/delete the project and set anyone's
+// role. Ranked so a check can ask for a minimum.
+//
+// 'member' is deliberately kept as a RANK entry even though it's no longer
+// assignable (excluded from ROLES) — requireProjectRole('member') is called
+// all over the route layer as the name of the lowest threshold, not as an
+// actual stored role value. Dropping it here would make every one of those
+// calls compare against `undefined` and reject everyone.
+export const ROLES = ['pm', 'pl', 'plan', 'design', 'dev', 'other']
+const RANK = { pm: 3, pl: 2, plan: 1, design: 1, dev: 1, other: 1, member: 1 }
 
 export function isValidRole(role) {
   return ROLES.includes(role)
+}
+
+// Legacy ProjectMember rows can still carry the retired 'member' value —
+// never bulk-migrated (see the role field's comment in schema.prisma), only
+// normalized wherever a role reaches the outside world. Rank-wise it makes
+// no difference ('member' and 'other' are both rank 1), but every consumer
+// of a role value used for display should go through this so 'member' never
+// leaks past this layer.
+export function normalizeRole(role) {
+  return role === 'member' ? 'other' : role
 }
 
 // The site admin (exactly one, enforced by a DB partial unique index — see
@@ -28,7 +46,7 @@ export async function getProjectAccess(projectId, user) {
   const membership = project.members[0]
   if (!membership) return null
 
-  return { project, role: membership.role, viaSiteAdmin: false }
+  return { project, role: normalizeRole(membership.role), viaSiteAdmin: false }
 }
 
 // Non-members get 404 rather than 403, so the API doesn't confirm that a

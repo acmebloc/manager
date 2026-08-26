@@ -14,6 +14,8 @@ import Layout from './components/Layout.jsx'
 import DashboardPage from './pages/DashboardPage.jsx'
 import LoginPage from './pages/LoginPage.jsx'
 import MyPage from './pages/MyPage.jsx'
+import ProjectDetailPage from './pages/ProjectDetailPage.jsx'
+import ProjectFormPage from './pages/ProjectFormPage.jsx'
 import ProjectsPage from './pages/ProjectsPage.jsx'
 import SchedulePage from './pages/SchedulePage.jsx'
 import TaskFormPage from './pages/TaskFormPage.jsx'
@@ -27,6 +29,8 @@ createRoot(document.getElementById('root')).render(
         <Route element={<Layout />}>
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
+          <Route path="/projects/new" element={<ProjectFormPage />} />
+          <Route path="/projects/:id" element={<ProjectDetailPage />} />
           <Route path="/tasks" element={<TasksPage />} />
           <Route path="/tasks/:projectId/new" element={<TaskFormPage />} />
           <Route path="/tasks/:projectId/:taskId" element={<TaskFormPage />} />

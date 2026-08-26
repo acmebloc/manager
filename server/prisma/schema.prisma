@@ -21,16 +21,18 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  projects            Project[]            @relation("ProjectOwner")
-  memberships         ProjectMember[]
-  tasks               Task[]               @relation("TaskAssignee")
-  createdTasks        Task[]               @relation("TaskCreatedBy")
-  uploadedAttachments TaskAttachment[]     @relation("TaskAttachmentUploader")
-  taskComments        TaskComment[]        @relation("TaskCommentAuthor")
-  taskCommentMentions TaskCommentMention[] @relation("TaskCommentMentionedUser")
-  schedules           Schedule[]           @relation("ScheduleOwner")
-  scheduleFollowing   ScheduleFollower[]   @relation("ScheduleFollowerUser")
-  oidcCodes           OidcAuthCode[]
+  projects               Project[]               @relation("ProjectOwner")
+  memberships            ProjectMember[]
+  tasks                  Task[]                  @relation("TaskAssignee")
+  createdTasks           Task[]                  @relation("TaskCreatedBy")
+  uploadedAttachments    TaskAttachment[]        @relation("TaskAttachmentUploader")
+  taskComments           TaskComment[]           @relation("TaskCommentAuthor")
+  taskCommentMentions    TaskCommentMention[]    @relation("TaskCommentMentionedUser")
+  projectComments        ProjectComment[]        @relation("ProjectCommentAuthor")
+  projectCommentMentions ProjectCommentMention[] @relation("ProjectCommentMentionedUser")
+  schedules              Schedule[]              @relation("ScheduleOwner")
+  scheduleFollowing      ScheduleFollower[]      @relation("ScheduleFollowerUser")
+  oidcCodes              OidcAuthCode[]
 }
 
 model Project {
@@ -49,6 +51,7 @@ model Project {
   members   ProjectMember[]
   tasks     Task[]
   schedules Schedule[]
+  comments  ProjectComment[]
 }
 
 // Who can see and touch a project, and how much. A project must always keep
@@ -59,14 +62,46 @@ model ProjectMember {
   project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  // 'member' works tasks/schedules like everyone else; 'pl' can also invite
-  // and remove members (always as plain 'member' — assigning pm/pl is a 'pm'
-  // -only power); 'pm' can also edit/delete the project and set anyone's role.
-  role      String   @default("member")
+  // 'plan'/'design'/'dev'/'other' all work tasks/schedules the same way (the
+  // old single 'member' tier, now split by job function to match Task.type's
+  // plan/design/dev naming); 'pl' can also invite and remove members (always
+  // at one of those four — assigning pm/pl is a 'pm'-only power); 'pm' can
+  // also edit/delete the project and set anyone's role.
+  // 'member' is no longer assignable but old rows may still carry it — never
+  // migrated in bulk, only normalized to 'other' at read time
+  // (server/src/routes/projects.js's decryptMember). Keep 'member' as a rank
+  // name in projectAccess.js's RANK regardless (requireProjectRole('member')
+  // depends on it as a threshold, not as a real stored value).
+  role      String   @default("other")
   createdAt DateTime @default(now())
 
   @@unique([projectId, userId])
   @@index([userId])
+}
+
+model ProjectComment {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation("ProjectCommentAuthor", fields: [authorId], references: [id])
+  body      String                       // 마크다운 원문, 평문 저장
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  mentions  ProjectCommentMention[]
+
+  @@index([projectId])
+}
+
+model ProjectCommentMention {
+  id        String         @id @default(cuid())
+  commentId String
+  comment   ProjectComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User           @relation("ProjectCommentMentionedUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([commentId, userId])
 }
 
 model Task {

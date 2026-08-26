@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { apiFetch } from '../lib/api'
 import PersonalGantt from '../components/PersonalGantt'
 import ProjectGantt from '../components/ProjectGantt'
 
 function SchedulePage() {
+  const [searchParams] = useSearchParams()
   const [projects, setProjects] = useState([])
   const [selectedProjectId, setSelectedProjectId] = useState('')
   const [loading, setLoading] = useState(true)
@@ -16,7 +18,12 @@ function SchedulePage() {
         const data = await apiFetch('/api/projects')
         if (cancelled) return
         setProjects(data)
-        if (data.length > 0) setSelectedProjectId(data[0].id)
+        // 프로젝트 상세 페이지의 "일정 바로가기"(?projectId=)로 들어왔으면 그
+        // 프로젝트를 우선 선택 — 없거나 내가 못 보는 프로젝트면 기존처럼 첫
+        // 번째로 폴백 (docs/project-menu-upgrade-spec.md 4.4).
+        const requested = searchParams.get('projectId')
+        const initial = data.find((p) => p.id === requested)?.id || data[0]?.id
+        if (initial) setSelectedProjectId(initial)
       } catch (err) {
         if (!cancelled) setError(err.message)
       } finally {
@@ -26,7 +33,7 @@ function SchedulePage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [searchParams])
 
   if (loading) return null
 

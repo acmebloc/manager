@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { apiFetch } from '../lib/api'
 import { TASK_GRADES, TASK_STATUSES, TASK_TYPES, sortTasks } from '../lib/taskFields'
 import { Avatar } from '../components/ProjectMembers'
@@ -80,7 +80,7 @@ function ProjectBoard({ section, onNavigateToTask, onMoveTask }) {
   }, [visibleTasks])
 
   return (
-    <section className="mb-8">
+    <section id={`project-${section.projectId}`} className="mb-8 scroll-mt-4">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-base font-medium text-gray-900 dark:text-white">{section.projectName}</h3>
         <div className="flex items-center gap-3">
@@ -151,6 +151,8 @@ function ProjectBoard({ section, onNavigateToTask, onMoveTask }) {
 
 function TasksPage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const scrollProjectId = searchParams.get('projectId')
   const [sections, setSections] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -171,6 +173,14 @@ function TasksPage() {
       cancelled = true
     }
   }, [])
+
+  // 프로젝트 상세 페이지의 "일감 바로가기"(?projectId=)로 들어왔을 때 해당
+  // 프로젝트 섹션으로 스크롤 — 전용 라우트를 새로 만들지 않기 위한 경량 구현
+  // (docs/project-menu-upgrade-spec.md 4.4).
+  useEffect(() => {
+    if (!scrollProjectId || sections.length === 0) return
+    document.getElementById(`project-${scrollProjectId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [scrollProjectId, sections])
 
   const onNavigateToTask = (projectId, taskId) => navigate(`/tasks/${projectId}/${taskId}`)
 
