@@ -35,7 +35,7 @@ function ProjectCard({ project }) {
           </p>
         )}
         <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-          {pm && `PM : ${pm.user?.name} · `}
+          {pm && `${pm.user?.name} · `}
           멤버 {project.members?.length ?? 0}명 · 일감 {project._count?.tasks ?? 0}개
         </p>
       </Link>

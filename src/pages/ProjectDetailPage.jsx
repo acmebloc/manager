@@ -17,15 +17,10 @@ const shortcutLinkClassName =
 // BookStack 프로젝트별 연동 전이라 대상 URL만 없을 뿐, 별도 비활성 스타일을
 // 두지 않는다 (docs/project-menu-upgrade-spec.md 4.6).
 function ShortcutLink({ to, label }) {
-  const content = (
-    <>
-      {label} <span aria-hidden="true">→</span>
-    </>
-  )
-  if (!to) return <a className={shortcutLinkClassName}>{content}</a>
+  if (!to) return <a className={shortcutLinkClassName}>{label}</a>
   return (
     <Link to={to} className={shortcutLinkClassName}>
-      {content}
+      {label}
     </Link>
   )
 }
@@ -267,6 +262,13 @@ function ProjectDetailPage() {
                 {formatDate(project.startAt) || '?'} ~ {formatDate(project.endAt) || '?'}
               </p>
             )}
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-gray-300 dark:text-gray-600">
+              <ShortcutLink to={`/tasks?projectId=${id}`} label="일감" />
+              <span aria-hidden="true">·</span>
+              <ShortcutLink to={`/schedule?projectId=${id}`} label="일정" />
+              <span aria-hidden="true">·</span>
+              <ShortcutLink to={null} label="게시판" />
+            </div>
           </div>
           {isPm && (
             <div className="flex shrink-0 gap-2">
@@ -291,7 +293,17 @@ function ProjectDetailPage() {
 
       {error && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
-      <div className="mt-6 flex flex-col gap-4 border-t border-gray-100 pt-6 dark:border-gray-700">
+      <div className="relative mt-6 flex flex-col gap-4 border-t border-gray-100 pt-6 dark:border-gray-700">
+        {isPmOrPl && (
+          <button
+            type="button"
+            onClick={membersOpen ? closeMembers : openMembers}
+            className="absolute right-0 top-6 text-xs text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"
+          >
+            {membersOpen ? '멤버 관리 닫기' : '멤버 관리'}
+          </button>
+        )}
+
         {pm && (
           <section>
             <h3 className="mb-1.5 text-xs font-medium text-gray-500 dark:text-gray-400">PM</h3>
@@ -307,18 +319,7 @@ function ProjectDetailPage() {
         )}
 
         <section>
-          <div className="mb-1.5 flex items-center justify-between">
-            <h3 className="text-xs font-medium text-gray-500 dark:text-gray-400">멤버</h3>
-            {isPmOrPl && (
-              <button
-                type="button"
-                onClick={membersOpen ? closeMembers : openMembers}
-                className="text-xs text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"
-              >
-                {membersOpen ? '멤버 관리 닫기' : '멤버 관리'}
-              </button>
-            )}
-          </div>
+          <h3 className="mb-1.5 text-xs font-medium text-gray-500 dark:text-gray-400">멤버</h3>
           {otherMembers.length === 0 ? (
             <p className="text-sm text-gray-400 dark:text-gray-500">등록된 멤버가 없습니다.</p>
           ) : (
@@ -344,14 +345,6 @@ function ProjectDetailPage() {
               onDiscard={discardMembers}
             />
           )}
-        </section>
-
-        <section className="flex flex-wrap items-center gap-2 text-gray-300 dark:text-gray-600">
-          <ShortcutLink to={`/tasks?projectId=${id}`} label="일감" />
-          <span aria-hidden="true">·</span>
-          <ShortcutLink to={`/schedule?projectId=${id}`} label="일정" />
-          <span aria-hidden="true">·</span>
-          <ShortcutLink to={null} label="게시판" />
         </section>
 
         <section className="border-t border-gray-100 pt-4 dark:border-gray-700">

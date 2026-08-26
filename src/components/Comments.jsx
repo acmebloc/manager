@@ -102,13 +102,18 @@ function CommentItem({ comment, mentionMembers, mentionUsersById, onSave, onDele
 // Shared comment thread — used for both task comments and project comments.
 // The two only differ in which REST path they hit, so the caller passes that
 // in rather than this component knowing anything about tasks or projects.
-function Comments({ apiPath, members }) {
+// collapsible: when true, the comment list (not the composer, which always
+// stays visible) starts collapsed and toggles via the "댓글 (N)" header —
+// used by the project detail page. TaskComments doesn't pass this, so task
+// comments keep their original always-open behavior.
+function Comments({ apiPath, members, collapsible = false }) {
   const [comments, setComments] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [draft, setDraft] = useState('')
   const [posting, setPosting] = useState(false)
   const [composeKey, setComposeKey] = useState(0)
+  const [expanded, setExpanded] = useState(!collapsible)
 
   // 현재 멤버 + 과거에 멘션됐지만 지금은 나간 사람까지 합친 맵. 나간 사람도
   // 멘션 → User 조회는 여전히 유효해서 최신 이름을 계속 보여줄 수 있다.
@@ -151,6 +156,7 @@ function Comments({ apiPath, members }) {
       setDraft('')
       setComposeKey((k) => k + 1) // MDXEditor's markdown prop is initial-only — remount to clear it
       setError('')
+      if (collapsible) setExpanded(true) // writing a comment while collapsed should reveal it
     } catch (err) {
       setError(err.message)
     } finally {
@@ -171,27 +177,43 @@ function Comments({ apiPath, members }) {
     setComments((current) => current.filter((c) => c.id !== id))
   }
 
+  const heading = (
+    <>
+      댓글 {comments.length > 0 && `(${comments.length})`}
+      {collapsible && <span aria-hidden="true">{expanded ? ' ▴' : ' ▾'}</span>}
+    </>
+  )
+
   return (
     <div>
-      <h4 className="mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">
-        댓글 {comments.length > 0 && `(${comments.length})`}
-      </h4>
-      {loading ? (
-        <p className="text-sm text-gray-400 dark:text-gray-500">불러오는 중...</p>
+      {collapsible ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((current) => !current)}
+          className="mb-2 flex items-center text-sm font-medium text-gray-700 dark:text-gray-300"
+        >
+          {heading}
+        </button>
       ) : (
-        <ul className="flex flex-col gap-3">
-          {comments.map((comment) => (
-            <CommentItem
-              key={comment.id}
-              comment={comment}
-              mentionMembers={members}
-              mentionUsersById={mentionUsersById}
-              onSave={saveComment}
-              onDelete={deleteComment}
-            />
-          ))}
-        </ul>
+        <h4 className="mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">{heading}</h4>
       )}
+      {expanded &&
+        (loading ? (
+          <p className="text-sm text-gray-400 dark:text-gray-500">불러오는 중...</p>
+        ) : (
+          <ul className="flex flex-col gap-3">
+            {comments.map((comment) => (
+              <CommentItem
+                key={comment.id}
+                comment={comment}
+                mentionMembers={members}
+                mentionUsersById={mentionUsersById}
+                onSave={saveComment}
+                onDelete={deleteComment}
+              />
+            ))}
+          </ul>
+        ))}
 
       <div className="mt-3 flex flex-col gap-2">
         <MarkdownEditor
