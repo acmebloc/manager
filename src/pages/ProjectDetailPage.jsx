@@ -10,16 +10,22 @@ function formatDate(value) {
 }
 
 const shortcutLinkClassName =
-  'inline-flex items-center gap-1.5 rounded-md border border-gray-200 px-3 py-1.5 text-sm text-gray-700 hover:border-indigo-300 hover:text-indigo-600 dark:border-gray-700 dark:text-gray-300 dark:hover:border-indigo-700 dark:hover:text-indigo-400'
+  'inline-flex items-center gap-1 text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400'
 
-// 세 바로가기는 전부 같은 모양·상호작용으로 만든다 — 게시판은 BookStack
-// 프로젝트별 연동 전이라 대상 URL만 없을 뿐, 별도 비활성 스타일을 두지 않는다
-// (docs/project-menu-upgrade-spec.md 4.6).
+// 버튼이 아니라 링크로 보이게 — MarkdownContent.jsx의 본문 링크와 같은 색/밑줄
+// 규칙을 재사용. 세 바로가기는 전부 같은 모양·상호작용으로 만든다 — 게시판은
+// BookStack 프로젝트별 연동 전이라 대상 URL만 없을 뿐, 별도 비활성 스타일을
+// 두지 않는다 (docs/project-menu-upgrade-spec.md 4.6).
 function ShortcutLink({ to, label }) {
-  if (!to) return <a className={shortcutLinkClassName}>{label}</a>
+  const content = (
+    <>
+      {label} <span aria-hidden="true">→</span>
+    </>
+  )
+  if (!to) return <a className={shortcutLinkClassName}>{content}</a>
   return (
     <Link to={to} className={shortcutLinkClassName}>
-      {label}
+      {content}
     </Link>
   )
 }
@@ -340,9 +346,11 @@ function ProjectDetailPage() {
           )}
         </section>
 
-        <section className="flex flex-wrap gap-2">
+        <section className="flex flex-wrap items-center gap-2 text-gray-300 dark:text-gray-600">
           <ShortcutLink to={`/tasks?projectId=${id}`} label="일감" />
+          <span aria-hidden="true">·</span>
           <ShortcutLink to={`/schedule?projectId=${id}`} label="일정" />
+          <span aria-hidden="true">·</span>
           <ShortcutLink to={null} label="게시판" />
         </section>
 
