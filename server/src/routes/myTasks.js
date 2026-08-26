@@ -11,8 +11,10 @@ const router = Router()
 // UI doesn't have to stitch the two lists together. Projects with no tasks
 // are still included, so the screen shows every project you're on.
 router.get('/', async (req, res) => {
+  // Same isSiteAdmin bypass as projects.js's GET / — the site admin sees
+  // every project's board site-wide, membership or not.
   const projects = await prisma.project.findMany({
-    where: { members: { some: { userId: req.user.id } } },
+    where: req.user.isSiteAdmin ? {} : { members: { some: { userId: req.user.id } } },
     orderBy: { createdAt: 'desc' },
     select: {
       id: true,
