@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import Toast from '../components/Toast'
 import { endGoogleSession } from '../lib/googleAuth'
 import { resizeImageFile } from '../lib/imageUtils'
 import { clearSession, loadSession, saveSession } from '../lib/secureProfileStore'
@@ -35,6 +36,7 @@ function MyPage() {
   const [isEditingName, setIsEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
   const [error, setError] = useState('')
+  const [toast, setToast] = useState(null)
   const fileInputRef = useRef(null)
   const navigate = useNavigate()
 
@@ -89,6 +91,22 @@ function MyPage() {
     }
   }, [nameDraft, session])
 
+  const toggleNotifications = useCallback(async () => {
+    const next = !(session.profile.emailNotificationsEnabled !== false)
+    try {
+      const updated = await updateProfile(session, { emailNotificationsEnabled: next })
+      await saveSession(updated)
+      setSession(updated)
+      setError('')
+      setToast({
+        id: Date.now(),
+        message: next ? '알림 설정이 활성화 되었습니다.' : '알림 설정이 비활성화 되었습니다.',
+      })
+    } catch {
+      setError('알림 설정 저장에 실패했어요. 다시 시도해주세요.')
+    }
+  }, [session])
+
   const handlePickImage = () => fileInputRef.current?.click()
 
   const handleImageChange = useCallback(
@@ -112,6 +130,7 @@ function MyPage() {
   if (loading) return null
 
   const { profile } = session
+  const notificationsEnabled = profile.emailNotificationsEnabled !== false
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-6 px-4">
@@ -184,6 +203,25 @@ function MyPage() {
         {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
       </div>
 
+      <div className="flex items-center gap-3 rounded-md border border-gray-200 px-4 py-3 dark:border-gray-700">
+        <span className="text-sm text-gray-700 dark:text-gray-200">이메일 알림</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={notificationsEnabled}
+          onClick={toggleNotifications}
+          className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+            notificationsEnabled ? 'bg-indigo-600' : 'bg-gray-300 dark:bg-gray-600'
+          }`}
+        >
+          <span
+            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+              notificationsEnabled ? 'translate-x-6' : 'translate-x-1'
+            }`}
+          />
+        </button>
+      </div>
+
       <button
         type="button"
         onClick={handleWithdraw}
@@ -191,6 +229,8 @@ function MyPage() {
       >
         회원탈퇴
       </button>
+
+      {toast && <Toast key={toast.id} message={toast.message} onDone={() => setToast(null)} />}
     </div>
   )
 }

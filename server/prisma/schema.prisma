@@ -18,6 +18,10 @@ model User {
   // added by hand in this field's migration, not expressible in this schema
   // language. Set directly in the DB; there's no UI for it.
   isSiteAdmin Boolean  @default(false)
+  // MyPage 토글 — 꺼지면 멘션/담당자 배정/일정 참조자 알림 메일을 안 보낸다
+  // (server/src/lib/notificationPrefs.js). 발송 여부만 제어할 뿐, 발송 수단
+  // 자체(docs/email-notifications-spec.md)와는 무관.
+  emailNotificationsEnabled Boolean @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

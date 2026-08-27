@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
 import { notifyAssigned } from '../lib/mailer.js'
+import { wantsEmailNotifications } from '../lib/notificationPrefs.js'
 import { requireProjectRole } from '../lib/projectAccess.js'
 import {
   assertDateOrder,
@@ -134,8 +135,9 @@ async function assertAssigneeIsMember(projectId, assigneeId, previousAssigneeId)
 // Fires only when the assignee is actually changing to someone new (guarded
 // by callers via previousAssigneeId, same condition assertAssigneeIsMember
 // skips on) — self-assignment doesn't need an email.
-function notifyIfNewAssignee(task, actor, previousAssigneeId) {
+async function notifyIfNewAssignee(task, actor, previousAssigneeId) {
   if (!task.assigneeId || task.assigneeId === previousAssigneeId || task.assigneeId === actor.id) return
+  if (!(await wantsEmailNotifications(task.assigneeId))) return
   notifyAssigned({
     to: decryptUser(task.assignee).email,
     actorName: actor.name,

@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
 import { notifyMention } from '../lib/mailer.js'
+import { wantsEmailNotifications } from '../lib/notificationPrefs.js'
 import { requireProjectRole } from '../lib/projectAccess.js'
 
 // Mounted at /api/projects/:projectId/comments
@@ -46,6 +47,7 @@ async function notifyNewMentions({ comment, projectId, actor, newUserIds }) {
   const link = `/projects/${projectId}`
   for (const mention of comment.mentions) {
     if (!newUserIds.has(mention.user.id) || mention.user.id === actor.id) continue
+    if (!(await wantsEmailNotifications(mention.user.id))) continue
     const recipient = decryptUser(mention.user)
     notifyMention({
       to: recipient.email,

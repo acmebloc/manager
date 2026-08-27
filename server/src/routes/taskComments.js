@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
 import { notifyMention } from '../lib/mailer.js'
+import { wantsEmailNotifications } from '../lib/notificationPrefs.js'
 import { requireProjectRole } from '../lib/projectAccess.js'
 
 // Mounted at /api/projects/:projectId/tasks/:taskId/comments
@@ -57,11 +58,12 @@ async function validMentionUserIds(projectId, mentionUserIds) {
 
 // 새로 멘션된 사람에게만 메일 — 이미 멘션돼 있던 사람을 댓글 수정할 때마다
 // 다시 알리지 않는다. 본인이 자기 자신을 멘션한 경우도 스킵.
-function notifyNewMentions({ comment, task, actor, newUserIds }) {
+async function notifyNewMentions({ comment, task, actor, newUserIds }) {
   if (newUserIds.size === 0) return
   const link = `/tasks/${task.projectId}/${task.id}`
   for (const mention of comment.mentions) {
     if (!newUserIds.has(mention.user.id) || mention.user.id === actor.id) continue
+    if (!(await wantsEmailNotifications(mention.user.id))) continue
     const recipient = decryptUser(mention.user)
     notifyMention({
       to: recipient.email,

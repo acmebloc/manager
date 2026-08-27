@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
 import { notifyScheduleFollower } from '../lib/mailer.js'
+import { wantsEmailNotifications } from '../lib/notificationPrefs.js'
 import { getProjectAccess } from '../lib/projectAccess.js'
 import { clampRecurrenceEndAt, expandOccurrences, isValidRecurrenceInterval } from '../lib/scheduleRecurrence.js'
 import { assertDateOrder } from '../lib/taskFields.js'
@@ -84,11 +85,12 @@ function visibleToUser(userId, memberProjectIds) {
 
 // 새로 참조자로 등록된 사람에게만 메일 — 기존 참조자를 그대로 둔 수정에는
 // 다시 보내지 않는다. 본인을 참조자로 등록한 경우도 스킵.
-function notifyNewFollowers({ schedule, actor, newUserIds }) {
+async function notifyNewFollowers({ schedule, actor, newUserIds }) {
   if (newUserIds.size === 0) return
   const link = schedule.projectId ? `/schedule?projectId=${schedule.projectId}` : '/schedule'
   for (const follower of schedule.followers) {
     if (!newUserIds.has(follower.user.id) || follower.user.id === actor.id) continue
+    if (!(await wantsEmailNotifications(follower.user.id))) continue
     const recipient = decryptUser(follower.user)
     notifyScheduleFollower({
       to: recipient.email,
