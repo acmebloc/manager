@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
+import { notifyAssigned } from '../lib/mailer.js'
 import { requireProjectRole } from '../lib/projectAccess.js'
 import {
   assertDateOrder,
@@ -130,6 +131,19 @@ async function assertAssigneeIsMember(projectId, assigneeId, previousAssigneeId)
   return membership ? null : 'Assignee must be a member of this project'
 }
 
+// Fires only when the assignee is actually changing to someone new (guarded
+// by callers via previousAssigneeId, same condition assertAssigneeIsMember
+// skips on) — self-assignment doesn't need an email.
+function notifyIfNewAssignee(task, actor, previousAssigneeId) {
+  if (!task.assigneeId || task.assigneeId === previousAssigneeId || task.assigneeId === actor.id) return
+  notifyAssigned({
+    to: decryptUser(task.assignee).email,
+    actorName: actor.name,
+    taskTitle: task.title,
+    link: `/tasks/${task.projectId}/${task.id}`,
+  })
+}
+
 router.get('/', requireProjectRole('member'), async (req, res) => {
   const { status, assigneeId } = req.query
   const tasks = await prisma.task.findMany({
@@ -240,6 +254,7 @@ router.post('/', requireProjectRole('member'), async (req, res) => {
     include: taskInclude,
   })
   await applyTaskLinks(req.params.projectId, task.id, { parentTaskIds, childTaskIds, relatedTaskIds })
+  notifyIfNewAssignee(task, req.user, null)
   const memberIds = await currentMemberIds(req.params.projectId)
   res.status(201).json(decryptTask(task, memberIds, req.user, req.projectAccess))
 })
@@ -300,6 +315,7 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
     include: taskInclude,
   })
   await applyTaskLinks(req.params.projectId, task.id, { parentTaskIds, childTaskIds, relatedTaskIds })
+  notifyIfNewAssignee(task, req.user, existing.assigneeId)
   const memberIds = await currentMemberIds(req.params.projectId)
   res.json(decryptTask(task, memberIds, req.user, req.projectAccess))
 })

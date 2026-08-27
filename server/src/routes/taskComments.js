@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
+import { notifyMention } from '../lib/mailer.js'
 import { requireProjectRole } from '../lib/projectAccess.js'
 
 // Mounted at /api/projects/:projectId/tasks/:taskId/comments
@@ -54,6 +55,23 @@ async function validMentionUserIds(projectId, mentionUserIds) {
   return members.map((m) => m.userId)
 }
 
+// 새로 멘션된 사람에게만 메일 — 이미 멘션돼 있던 사람을 댓글 수정할 때마다
+// 다시 알리지 않는다. 본인이 자기 자신을 멘션한 경우도 스킵.
+function notifyNewMentions({ comment, task, actor, newUserIds }) {
+  if (newUserIds.size === 0) return
+  const link = `/tasks/${task.projectId}/${task.id}`
+  for (const mention of comment.mentions) {
+    if (!newUserIds.has(mention.user.id) || mention.user.id === actor.id) continue
+    const recipient = decryptUser(mention.user)
+    notifyMention({
+      to: recipient.email,
+      actorName: actor.name,
+      contextLabel: `"${task.title}" 일감 댓글`,
+      link,
+    })
+  }
+}
+
 router.get('/', requireProjectRole('member'), async (req, res) => {
   const task = await loadTask(req, res)
   if (!task) return
@@ -83,6 +101,7 @@ router.post('/', requireProjectRole('member'), async (req, res) => {
     },
     include: commentInclude,
   })
+  notifyNewMentions({ comment, task, actor: req.user, newUserIds: new Set(mentionIds) })
   res.status(201).json(decryptComment(comment, req.user.id))
 })
 
@@ -99,6 +118,12 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
   const { body, mentionUserIds } = req.body
   if (!body) return res.status(400).json({ error: 'body is required' })
 
+  const oldMentions = await prisma.taskCommentMention.findMany({
+    where: { commentId: existing.id },
+    select: { userId: true },
+  })
+  const oldMentionIds = new Set(oldMentions.map((m) => m.userId))
+
   const mentionIds = await validMentionUserIds(req.params.projectId, mentionUserIds)
   const comment = await prisma.taskComment.update({
     where: { id: existing.id },
@@ -111,6 +136,8 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
     },
     include: commentInclude,
   })
+  const newUserIds = new Set(mentionIds.filter((id) => !oldMentionIds.has(id)))
+  notifyNewMentions({ comment, task, actor: req.user, newUserIds })
   res.json(decryptComment(comment, req.user.id))
 })
 

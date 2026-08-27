@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
+import { notifyMention } from '../lib/mailer.js'
 import { requireProjectRole } from '../lib/projectAccess.js'
 
 // Mounted at /api/projects/:projectId/comments
@@ -37,6 +38,24 @@ async function validMentionUserIds(projectId, mentionUserIds) {
   return members.map((m) => m.userId)
 }
 
+// taskComments.js의 notifyNewMentions와 동일한 규칙: 새로 멘션된 사람에게만,
+// 본인 멘션은 스킵. 프로젝트 이름은 알릴 대상이 있을 때만 조회한다.
+async function notifyNewMentions({ comment, projectId, actor, newUserIds }) {
+  if (newUserIds.size === 0) return
+  const project = await prisma.project.findUnique({ where: { id: projectId }, select: { name: true } })
+  const link = `/projects/${projectId}`
+  for (const mention of comment.mentions) {
+    if (!newUserIds.has(mention.user.id) || mention.user.id === actor.id) continue
+    const recipient = decryptUser(mention.user)
+    notifyMention({
+      to: recipient.email,
+      actorName: actor.name,
+      contextLabel: `"${project.name}" 프로젝트 댓글`,
+      link,
+    })
+  }
+}
+
 router.get('/', requireProjectRole('member'), async (req, res) => {
   const comments = await prisma.projectComment.findMany({
     where: { projectId: req.params.projectId },
@@ -60,6 +79,12 @@ router.post('/', requireProjectRole('member'), async (req, res) => {
     },
     include: commentInclude,
   })
+  notifyNewMentions({
+    comment,
+    projectId: req.params.projectId,
+    actor: req.user,
+    newUserIds: new Set(mentionIds),
+  })
   res.status(201).json(decryptComment(comment, req.user.id))
 })
 
@@ -73,6 +98,12 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
   const { body, mentionUserIds } = req.body
   if (!body) return res.status(400).json({ error: 'body is required' })
 
+  const oldMentions = await prisma.projectCommentMention.findMany({
+    where: { commentId: existing.id },
+    select: { userId: true },
+  })
+  const oldMentionIds = new Set(oldMentions.map((m) => m.userId))
+
   const mentionIds = await validMentionUserIds(req.params.projectId, mentionUserIds)
   const comment = await prisma.projectComment.update({
     where: { id: existing.id },
@@ -85,6 +116,8 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
     },
     include: commentInclude,
   })
+  const newUserIds = new Set(mentionIds.filter((id) => !oldMentionIds.has(id)))
+  notifyNewMentions({ comment, projectId: req.params.projectId, actor: req.user, newUserIds })
   res.json(decryptComment(comment, req.user.id))
 })
 

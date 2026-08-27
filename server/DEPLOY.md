@@ -6,7 +6,7 @@
 
 **확인된 서버 환경** (2026-08-20 기준)
 
-- 퍼블릭 IP: `3.39.230.46`, 메인 도메인: `https://acmebloc.com/` (이미 SSL 적용됨, 다른 사이트용으로 보존)
+- 퍼블릭 IP: `15.164.69.195`, 메인 도메인: `https://acmebloc.com/` (이미 SSL 적용됨, 다른 사이트용으로 보존)
 - OS/웹서버: **Ubuntu + Apache 2.4.66**
 - 현재 Apache 기본 페이지만 떠 있음, Node.js 미설치, `mod_proxy`/`mod_proxy_http` 미활성화 확인됨
 - 같은 서버에 다른 사이트도 추가 예정 → 이 앱은 전용 리눅스 사용자·디렉터리·DB로 분리
@@ -25,14 +25,14 @@
 사용 중인 DNS 관리 콘솔(Route 53 등)에서:
 
 ```
-manager.acmebloc.com   A   3.39.230.46
+manager.acmebloc.com   A   15.164.69.195
 ```
 
 레코드 추가 후 전파 확인:
 
 ```bash
 dig +short manager.acmebloc.com
-# 3.39.230.46 나오면 OK (전파에 몇 분~몇십 분 걸릴 수 있음)
+# 15.164.69.195 나오면 OK (전파에 몇 분~몇십 분 걸릴 수 있음)
 ```
 
 ## 2. 격리된 공간 만들기 (전용 사용자 + 디렉터리 + DB)
@@ -62,7 +62,7 @@ sudo chown manager:manager /var/www/manager
 RDS는 퍼블릭 액세스가 꺼져 있어서 **EC2에 SSH로 접속한 상태에서** 진행해야 함:
 
 ```bash
-ssh -i /path/to/key.pem ubuntu@3.39.230.46
+ssh -i /path/to/key.pem ubuntu@15.164.69.195
 
 # psql 클라이언트가 없으면 설치
 sudo apt-get update
@@ -94,7 +94,7 @@ ALTER SCHEMA public OWNER TO manager_app;
 ## 4. EC2에 Node.js 설치 (Ubuntu)
 
 ```bash
-ssh -i /path/to/key.pem ubuntu@3.39.230.46
+ssh -i /path/to/key.pem ubuntu@15.164.69.195
 
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs git
@@ -257,6 +257,43 @@ openssl rand -hex 32
 
 ```bash
 echo "FIELD_ENCRYPTION_KEY=여기에_생성한_값" >> .env
+chmod 600 .env
+exit   # manager 셸에서 나가기
+
+sudo systemctl restart pm2-manager
+curl http://localhost:4000/health
+```
+
+## 12. 이메일 알림 반영 (기존 배포에 추가 적용)
+
+멘션/담당자 배정/일정 참조자 등록 시 이메일을 보내는 기능 추가. Google Workspace
+SMTP 릴레이로 발송하며(계정 인증 없이 이 서버의 고정 IP로 인증), 스키마 변경은
+없음 — `npm install`로 `nodemailer` 설치와 `.env` 값 추가만 하면 됨.
+
+사전 조건(2026-08-27 완료, Workspace 관리 콘솔): 발신용 그룹
+`notifications@acmebloc.com` 생성, SMTP 릴레이 허용 목록에 이 서버의 고정
+퍼블릭 IP(`15.164.69.195`) 등록. 자세한 절차는 `docs/email-notifications-spec.md`
+2장 참고.
+
+```bash
+sudo -u manager /bin/bash
+cd /var/www/manager/app
+git pull
+npm install && npm run build
+
+cd server
+npm install   # nodemailer 추가됨
+```
+
+`.env`에 SMTP 관련 값 추가 (`.env.example` 참고 — 로컬 개발 `.env`에는 넣지 않음,
+`SMTP_HOST`가 없으면 실제 발송 대신 콘솔 로그로 대체되는 걸 이용해 로컬은 그대로 둠):
+
+```bash
+cat >> .env <<'EOF'
+SMTP_HOST=smtp-relay.gmail.com
+SMTP_PORT=587
+MAIL_FROM=notifications@acmebloc.com
+EOF
 chmod 600 .env
 exit   # manager 셸에서 나가기
 

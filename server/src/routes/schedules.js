@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
+import { notifyScheduleFollower } from '../lib/mailer.js'
 import { getProjectAccess } from '../lib/projectAccess.js'
 import { clampRecurrenceEndAt, expandOccurrences, isValidRecurrenceInterval } from '../lib/scheduleRecurrence.js'
 import { assertDateOrder } from '../lib/taskFields.js'
@@ -78,6 +79,23 @@ async function setFollowers(scheduleId, followerIds) {
 function visibleToUser(userId, memberProjectIds) {
   return {
     OR: [{ ownerId: userId }, { projectId: { in: memberProjectIds } }],
+  }
+}
+
+// 새로 참조자로 등록된 사람에게만 메일 — 기존 참조자를 그대로 둔 수정에는
+// 다시 보내지 않는다. 본인을 참조자로 등록한 경우도 스킵.
+function notifyNewFollowers({ schedule, actor, newUserIds }) {
+  if (newUserIds.size === 0) return
+  const link = schedule.projectId ? `/schedule?projectId=${schedule.projectId}` : '/schedule'
+  for (const follower of schedule.followers) {
+    if (!newUserIds.has(follower.user.id) || follower.user.id === actor.id) continue
+    const recipient = decryptUser(follower.user)
+    notifyScheduleFollower({
+      to: recipient.email,
+      actorName: actor.name,
+      scheduleTitle: schedule.title,
+      link,
+    })
   }
 }
 
@@ -205,6 +223,7 @@ router.post('/', async (req, res) => {
   if (followerIds.length > 0) await setFollowers(schedule.id, followerIds)
 
   const withIncludes = await prisma.schedule.findUnique({ where: { id: schedule.id }, include: scheduleInclude })
+  notifyNewFollowers({ schedule: withIncludes, actor: req.user, newUserIds: new Set(followerIds) })
   res.status(201).json(decryptSchedule(withIncludes))
 })
 
@@ -245,11 +264,18 @@ router.patch('/:id', async (req, res) => {
     const access = await getProjectAccess(nextProjectId, req.user)
     if (!access) return res.status(404).json({ error: 'Project not found' })
   }
+  let oldFollowerIds = new Set()
   if (followerIds !== undefined) {
     const followerProblem = nextProjectId
       ? await assertFollowersAreMembers(nextProjectId, followerIds)
       : await assertFollowersExist(followerIds)
     if (followerProblem) return res.status(400).json({ error: followerProblem })
+
+    const oldFollowers = await prisma.scheduleFollower.findMany({
+      where: { scheduleId: req.params.id },
+      select: { userId: true },
+    })
+    oldFollowerIds = new Set(oldFollowers.map((f) => f.userId))
   }
 
   await prisma.schedule.update({
@@ -265,6 +291,10 @@ router.patch('/:id', async (req, res) => {
   if (followerIds !== undefined) await setFollowers(req.params.id, followerIds)
 
   const schedule = await prisma.schedule.findUnique({ where: { id: req.params.id }, include: scheduleInclude })
+  if (followerIds !== undefined) {
+    const newUserIds = new Set(followerIds.filter((id) => !oldFollowerIds.has(id)))
+    notifyNewFollowers({ schedule, actor: req.user, newUserIds })
+  }
   res.json(decryptSchedule(schedule))
 })
 
