@@ -293,59 +293,61 @@ function ProjectDetailPage() {
 
       {error && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
-      <div className="relative mt-6 flex flex-col gap-4 border-t border-gray-100 pt-6 dark:border-gray-700">
-        {isPmOrPl && (
-          <button
-            type="button"
-            onClick={membersOpen ? closeMembers : openMembers}
-            className="absolute right-0 top-6 text-xs text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"
-          >
-            {membersOpen ? '멤버 관리 닫기' : '멤버 관리'}
-          </button>
-        )}
-
-        {pm && (
-          <section>
-            <h3 className="mb-1.5 text-xs font-medium text-gray-500 dark:text-gray-400">PM</h3>
-            <MemberIdentity user={pm.user} />
-          </section>
-        )}
-
-        {pl && (
-          <section>
-            <h3 className="mb-1.5 text-xs font-medium text-gray-500 dark:text-gray-400">PL</h3>
-            <MemberIdentity user={pl.user} />
-          </section>
-        )}
-
-        <section>
-          <h3 className="mb-1.5 text-xs font-medium text-gray-500 dark:text-gray-400">멤버</h3>
-          {otherMembers.length === 0 ? (
-            <p className="text-sm text-gray-400 dark:text-gray-500">등록된 멤버가 없습니다.</p>
-          ) : (
-            <ul className="flex flex-col gap-2">
-              {otherMembers.map((m) => (
-                <li key={m.userId} className="flex items-center gap-2">
-                  <MemberIdentity user={m.user} />
-                  <span className="text-xs text-gray-500 dark:text-gray-400">{roleLabel(m.role)}</span>
-                </li>
-              ))}
-            </ul>
+      <div className="mt-6 flex flex-col gap-4">
+        <div className="relative flex flex-col gap-4 border-t border-gray-100 pt-6 dark:border-gray-700">
+          {isPmOrPl && (
+            <button
+              type="button"
+              onClick={membersOpen ? closeMembers : openMembers}
+              className="absolute right-0 top-6 text-xs text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"
+            >
+              {membersOpen ? '멤버 관리 닫기' : '멤버 관리'}
+            </button>
           )}
-          {membersOpen && (
-            <ProjectMembers
-              members={draftMembers}
-              myRole={project.myRole}
-              pending={pending}
-              diff={diff}
-              saving={savingMembers}
-              error={memberError}
-              onChange={setDraftMembers}
-              onSave={saveMembers}
-              onDiscard={discardMembers}
-            />
+
+          {pm && (
+            <section>
+              <h3 className="mb-1.5 text-xs font-medium text-gray-500 dark:text-gray-400">PM</h3>
+              <MemberIdentity user={pm.user} />
+            </section>
           )}
-        </section>
+
+          {pl && (
+            <section>
+              <h3 className="mb-1.5 text-xs font-medium text-gray-500 dark:text-gray-400">PL</h3>
+              <MemberIdentity user={pl.user} />
+            </section>
+          )}
+
+          <section>
+            <h3 className="mb-1.5 text-xs font-medium text-gray-500 dark:text-gray-400">멤버</h3>
+            {otherMembers.length === 0 ? (
+              <p className="text-sm text-gray-400 dark:text-gray-500">등록된 멤버가 없습니다.</p>
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {otherMembers.map((m) => (
+                  <li key={m.userId} className="flex items-center gap-2">
+                    <MemberIdentity user={m.user} />
+                    <span className="text-xs text-gray-500 dark:text-gray-400">{roleLabel(m.role)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {membersOpen && (
+              <ProjectMembers
+                members={draftMembers}
+                myRole={project.myRole}
+                pending={pending}
+                diff={diff}
+                saving={savingMembers}
+                error={memberError}
+                onChange={setDraftMembers}
+                onSave={saveMembers}
+                onDiscard={discardMembers}
+              />
+            )}
+          </section>
+        </div>
 
         <section className="border-t border-gray-100 pt-4 dark:border-gray-700">
           <ProjectComments projectId={id} members={memberUsers} />
