@@ -25,10 +25,12 @@ async function sendMail({ to, subject, text, html }) {
   }
 }
 
+const FOOTER = '본 메일은 발신 전용입니다. 회신되지 않습니다.'
+
 function notify({ to, subject, heading, link, linkLabel }) {
   const url = link ? `${process.env.FRONTEND_ORIGIN}${link}` : null
-  const text = [heading, url].filter(Boolean).join('\n\n')
-  const html = `<p>${heading}</p>${url ? `<p><a href="${url}">${linkLabel}</a></p>` : ''}`
+  const text = [heading, url, FOOTER].filter(Boolean).join('\n\n')
+  const html = `<p>${heading}</p>${url ? `<p><a href="${url}">${linkLabel}</a></p>` : ''}<p style="color:#888;font-size:12px">${FOOTER}</p>`
   return sendMail({ to, subject, text, html })
 }
 
