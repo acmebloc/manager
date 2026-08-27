@@ -74,7 +74,16 @@ export function Avatar({ user }) {
 // hover — used on the project detail page for PM/PL/멤버 rows (spec 4.5).
 // Deliberately not a native `title` tooltip: a copy button has to be
 // clickable, which a title tooltip can't host.
+//
+// The popover sits directly on top of the name (covering it, not the
+// avatar) instead of below it with a gap — a gap meant crossing empty space
+// to reach the popover, which broke hover partway there and closed it
+// before the copy button could be clicked. Overlapping the name means the
+// pointer never leaves the hoverable area. Driven by explicit state (not
+// CSS-only `:hover`) so clicking copy can dismiss it immediately, even
+// while the mouse is still resting on top.
 export function MemberIdentity({ user, className = '' }) {
+  const [hovered, setHovered] = useState(false)
   const [copied, setCopied] = useState(false)
 
   const copyEmail = async (event) => {
@@ -89,24 +98,33 @@ export function MemberIdentity({ user, className = '' }) {
       // Clipboard permission denied/unavailable — nothing sensible to fall
       // back to, so this just silently doesn't copy.
     }
+    setHovered(false)
   }
 
+  const showPopover = hovered && user?.email
+
   return (
-    <span className={`group relative inline-flex items-center gap-1.5 ${className}`}>
+    <span
+      className={`inline-flex items-center gap-1.5 ${className}`}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       <Avatar user={user} />
-      <span className="text-sm text-gray-900 dark:text-white">{user?.name}</span>
-      {user?.email && (
-        <span className="pointer-events-none absolute left-0 top-full z-10 mt-1 hidden items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-200 bg-white px-2 py-1 text-xs shadow-lg group-hover:pointer-events-auto group-hover:flex dark:border-gray-700 dark:bg-gray-800">
-          <span className="text-gray-600 dark:text-gray-300">{user.email}</span>
-          <button
-            type="button"
-            onClick={copyEmail}
-            className="shrink-0 rounded px-1.5 py-0.5 text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
-          >
-            {copied ? '복사됨' : '복사'}
-          </button>
-        </span>
-      )}
+      <span className="relative inline-block">
+        <span className="text-sm text-gray-900 dark:text-white">{user?.name}</span>
+        {showPopover && (
+          <span className="absolute left-0 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-200 bg-white px-2 py-1 text-xs shadow-lg dark:border-gray-700 dark:bg-gray-800">
+            <span className="text-gray-600 dark:text-gray-300">{user.email}</span>
+            <button
+              type="button"
+              onClick={copyEmail}
+              className="shrink-0 rounded px-1.5 py-0.5 text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
+            >
+              {copied ? '복사됨' : '복사'}
+            </button>
+          </span>
+        )}
+      </span>
     </span>
   )
 }
