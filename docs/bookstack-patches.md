@@ -28,6 +28,7 @@
 | 9 | `lang/ko/entities.php` | 엔티티 명칭(공간/문서함/섹션/문서) | **재적용 필요** |
 | 10 | 설정 DB (`app-color`) + 커스텀 head | 디자인 톤(색상·폰트) + 로고 숨김 | 유지 |
 | 11 | `themes/acmebloc/layouts/parts/header.blade.php` (5번 갱신) | Manager 메뉴 라벨 동기화 (일감/일정) | 유지 (※ 아래 주의) |
+| 12 | `themes/acmebloc/layouts/parts/header-links(-shelves).blade.php`, `header.blade.php` | 로고 삭제 + 공간/문서함 실제 이동 | 유지 (※ 아래 주의) |
 
 > **※ 뷰 오버라이드 주의** — 5·6번은 삭제되지는 않지만 **낡을 수 있다.** 테마의 복사본이
 > 원본을 완전히 대체하므로, 업그레이드로 원본에 새 마크업이 추가돼도 우리 복사본은 옛날
@@ -604,7 +605,7 @@ path = sys.argv[1]
 with open(path) as f:
     content = f.read()
 
-if "MANAGER-NAV-V6" in content:
+if "MANAGER-NAV-V7" in content:
     print("already patched, skipping")
     raise SystemExit(0)
 
@@ -612,7 +613,7 @@ m = re.search(r'<!-- MANAGER-NAV(-V\d+)? -->.*?</style>\n(<script>.*?</script>\n
 if not m:
     raise SystemExit("old MANAGER-NAV block not found — aborting")
 
-snippet = """<!-- MANAGER-NAV-V6 -->
+snippet = """<!-- MANAGER-NAV-V7 -->
 <nav class="acmebloc-topnav" aria-label="Manager 메뉴">
     <a href="/dashboard">홈</a>
     <a href="/projects">프로젝트</a>
@@ -638,8 +639,11 @@ header#header, header#header * {
 }
 .header-links a { color: #4f46e5 !important; text-decoration: none !important; }
 .header-links a:hover { text-decoration: underline !important; }
-/* 공간/문서함 그룹을 게시판 메뉴 칸 아래로 — 문서함/설정은 뒤따라오므로 첫 링크만 밀면 됨 */
-.links a[href$="/shelves"] { margin-left: 96px; }
+/* 공간/문서함은 12번에서 로고 자리(첫 번째 flex 그룹)로 실제 이동시킨다 — 그 그룹을
+   게시판 메뉴 칸 아래로 정렬 */
+.acmebloc-header-shelves { display: flex; align-items: center; gap: 0.75rem; margin-left: 96px; }
+.acmebloc-header-shelves a { display: inline-flex; align-items: center; gap: 0.25rem; color: #4f46e5; text-decoration: none; font-size: 0.875rem; }
+.acmebloc-header-shelves a:hover { text-decoration: underline; }
 #header-search-box-input {
   background: #fff !important; border: 1px solid #d1d5db !important; color: #111827 !important;
   border-radius: 0.375rem !important; box-shadow: none !important;
@@ -665,8 +669,111 @@ sudo -u bookstack bash -c "cd $BS && php artisan view:clear"
 
 > **확인 필요** — `header#header`, `.header-links`, `#header-search-box-input` 등은
 > 실제로 복사해 받은 outerHTML 기준이라 신뢰도가 높지만, 적용 후 스크린샷으로
-> 배경색·폰트·검색창이 실제로 바뀌었는지 확인할 것. `margin-left: 96px`는 스크린샷
-> 비교로 어림잡은 값이라 픽셀 단위로 안 맞으면 이 숫자만 조정하면 된다.
+> 배경색·폰트·검색창이 실제로 바뀌었는지 확인할 것.
+
+> **버전을 올릴 때마다 마커 문자열도 반드시 같이 바꿀 것** — 한 번은 CSS 내용만
+> 바꾸고 마커(`MANAGER-NAV-V5`)를 그대로 둬서, 이후 재실행마다 "이미 패치됨"으로
+> 스킵되어 수정 내용이 실제로는 한 번도 반영되지 않은 적이 있다. 구조가 아니라
+> 내용만 바뀌어도 버전을 올린다.
+
+---
+
+## 12. 로고 삭제 + 공간/문서함을 실제로 그 자리로 이동 (Blade 레벨)
+
+11번까지는 `.links a[href$="/shelves"] { margin-left: 96px; }`처럼 CSS로 위치만
+맞추려 했는데 두 가지 문제가 있었다:
+1. 96px가 정확히 안 맞아서 계속 어긋났다(`.links`가 `text-align: center`인 컨테이너라
+   `margin-left` 하나로는 예측대로 안 움직였을 가능성이 큼).
+2. 로고를 `display:none`으로 숨기기만 해서 안 쓰는 코드가 그대로 남아있었다 —
+   불필요한 코드를 남기지 말라는 피드백을 받음.
+
+**결정: 진짜로 옮긴다.** 공간/문서함 `<a>`는 BookStack 원본에서
+`userCanOnAny(...Bookshelf::class)` 권한 체크로 감싸져 있어서(공간 목록을 볼 권한이
+없으면 링크 자체가 안 뜬다), CSS로 숨기고 텍스트만 복제하면 권한 없는 사용자에게도
+링크가 보이는 실제 버그가 생긴다 — 그래서 Blade 코드 자체를 옮겨야 한다.
+
+**변경 파일 3개 (전부 `themes/acmebloc/layouts/parts/` 안):**
+1. `header-links-shelves.blade.php` (신규) — 원본 `header-links.blade.php`의 공간/
+   문서함 블록(권한 체크 포함)을 그대로 옮겨온 새 파샬. 로고가 있던 자리에 이걸 넣는다.
+2. `header-links.blade.php` (원본을 복사해 수정) — 공간/문서함 블록만 제거, 검색/
+   설정/게스트 로그인은 그대로.
+3. `header.blade.php` (5·11번에서 이미 다루던 파일) — `@include('layouts.parts.header-logo')`
+   한 줄을 `@include('layouts.parts.header-links-shelves')`로 교체. 로고는 완전히
+   삭제되고 그 자리에 공간/문서함이 실제로 렌더링된다.
+
+```bash
+BS=/var/www/bookstack/app
+
+echo "1) header-links-shelves.blade.php 생성"
+sudo mkdir -p $BS/themes/acmebloc/layouts/parts
+sudo tee $BS/themes/acmebloc/layouts/parts/header-links-shelves.blade.php > /dev/null <<'EOF'
+<div class="acmebloc-header-shelves">
+@if (user()->hasAppAccess())
+    @if(userCanOnAny(\BookStack\Permissions\Permission::View, \BookStack\Entities\Models\Bookshelf::class) || userCan(\BookStack\Permissions\Permission::BookshelfViewAll) || userCan(\BookStack\Permissions\Permission::BookshelfViewOwn))
+        <a href="{{ url('/shelves') }}"
+           data-shortcut="shelves_view">@icon('bookshelf'){{ trans('entities.shelves') }}</a>
+    @endif
+    <a href="{{ url('/books') }}" data-shortcut="books_view">@icon('books'){{ trans('entities.books') }}</a>
+@endif
+</div>
+EOF
+
+echo "2) header-links.blade.php — 원본 복사 후 공간/문서함 블록 제거"
+if [ ! -f "$BS/themes/acmebloc/layouts/parts/header-links.blade.php" ]; then
+  sudo cp "$BS/resources/views/layouts/parts/header-links.blade.php" \
+          "$BS/themes/acmebloc/layouts/parts/header-links.blade.php"
+fi
+sudo python3 - "$BS/themes/acmebloc/layouts/parts/header-links.blade.php" <<'PYEOF'
+import re, sys
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+
+if 'shelves_view' not in content:
+    print('header-links.blade.php: already stripped, skipping')
+else:
+    pattern = re.compile(
+        r"\s*@if\(userCanOnAny.*?data-shortcut=\"books_view\">@icon\('books'\)\{\{ trans\('entities\.books'\) \}\}</a>\n",
+        re.S,
+    )
+    new_content, count = pattern.subn('\n', content, count=1)
+    if count == 0:
+        raise SystemExit('header-links.blade.php: shelves/books block not found — aborting, check file manually')
+    with open(path, 'w') as f:
+        f.write(new_content)
+    print('header-links.blade.php: shelves/books block removed')
+PYEOF
+
+echo "3) header.blade.php — 로고 include를 shelves/books 파샬로 교체"
+sudo python3 - "$BS/themes/acmebloc/layouts/parts/header.blade.php" <<'PYEOF'
+import sys
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+
+old = "@include('layouts.parts.header-logo')"
+new = "@include('layouts.parts.header-links-shelves')"
+if new in content:
+    print('header.blade.php: already patched, skipping')
+elif old not in content:
+    raise SystemExit('header.blade.php: header-logo include not found — aborting')
+else:
+    content = content.replace(old, new, 1)
+    with open(path, 'w') as f:
+        f.write(content)
+    print('header.blade.php: logo include replaced with shelves/books partial')
+PYEOF
+
+sudo chown -R bookstack:bookstack $BS/themes/acmebloc
+sudo -u bookstack bash -c "cd $BS && php artisan view:clear"
+```
+
+> **확인 필요** — `header-links.blade.php`는 GitHub의 최신 BookStack 소스를 참고해
+> 작성했지만, 실제로는 서버의 원본을 그대로 복사해서 패치하므로 버전 차이는 문제 없다.
+> 다만 정규식 앵커(`userCanOnAny` ~ `books_view`)가 실제 원본과 다르면 안전하게
+> abort하도록 만들어뒀다 — "block not found" 에러가 나면 그 파일을
+> `cat`해서 보여줄 것. `.acmebloc-header-shelves`의 `margin-left: 96px`도 여전히
+> 어림값이라 화면 보고 조정이 필요할 수 있다.
 
 ---
 
@@ -737,5 +844,10 @@ sudo grep -E "^\s*'(shelf|book|chapter|page)'\s*=>" $BS/lang/ko/entities.php 2>/
   || sudo grep -E "^\s*'(shelf|book|chapter|page)'\s*=>" $BS/resources/lang/ko/entities.php 2>/dev/null
 echo
 echo "=== 게시판 서브메뉴 마커 (1 이상이어야 정상) ==="
-sudo grep -c "MANAGER-NAV-V6" $BS/themes/acmebloc/layouts/parts/header.blade.php
+sudo grep -c "MANAGER-NAV-V7" $BS/themes/acmebloc/layouts/parts/header.blade.php
+echo
+echo "=== 로고 삭제(header.blade.php가 shelves 파샬을 쓰는지, 1이어야 정상) ==="
+sudo grep -c "header-links-shelves" $BS/themes/acmebloc/layouts/parts/header.blade.php
+echo "=== 공간/문서함이 header-links.blade.php에서 빠졌는지 (0이어야 정상) ==="
+sudo grep -c "shelves_view" $BS/themes/acmebloc/layouts/parts/header-links.blade.php
 ```
