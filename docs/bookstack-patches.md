@@ -241,7 +241,7 @@ snippet = """<!-- MANAGER-NAV -->
     <a href="/mypage">마이페이지</a>
 </nav>
 <style>
-.acmebloc-topnav { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid #e5e7eb; padding: 0 16px; background: #fff; }
+.acmebloc-topnav { display: flex; align-items: center; gap: 0.25rem; border-bottom: 1px solid #e5e7eb; padding: 0 1rem; background: #fff; }
 .acmebloc-topnav a { display: inline-block; padding: 0.75rem 1rem; font-size: 0.875rem; line-height: 1.25rem; font-weight: 500; color: #6b7280; text-decoration: none; border-bottom: 2px solid transparent; }
 .acmebloc-topnav a:hover { color: #111827; }
 .acmebloc-topnav a.active { color: #4f46e5; border-bottom-color: #4f46e5; }
@@ -608,7 +608,7 @@ if "MANAGER-NAV-V5" in content:
     print("already patched, skipping")
     raise SystemExit(0)
 
-m = re.search(r'<!-- MANAGER-NAV -->.*?</style>\n(<script>.*?</script>\n)?', content, re.S)
+m = re.search(r'<!-- MANAGER-NAV(-V\d+)? -->.*?</style>\n(<script>.*?</script>\n)?', content, re.S)
 if not m:
     raise SystemExit("old MANAGER-NAV block not found — aborting")
 
@@ -622,7 +622,7 @@ snippet = """<!-- MANAGER-NAV-V5 -->
     <a href="/mypage">마이페이지</a>
 </nav>
 <style>
-.acmebloc-topnav { display: flex; align-items: center; border-bottom: 1px solid #e5e7eb; padding: 0 16px; background: #fff; }
+.acmebloc-topnav { display: flex; align-items: center; gap: 0.25rem; border-bottom: 1px solid #e5e7eb; padding: 0 1rem; background: #fff; }
 .acmebloc-topnav a { display: inline-block; padding: 0.75rem 1rem; font-size: 0.875rem; line-height: 1.25rem; font-weight: 500; color: #6b7280; text-decoration: none; border-bottom: 2px solid transparent; }
 .acmebloc-topnav a:hover { color: #111827; }
 .acmebloc-topnav a.active { color: #4f46e5; border-bottom-color: #4f46e5; }
