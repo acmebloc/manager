@@ -242,7 +242,7 @@ snippet = """<!-- MANAGER-NAV -->
 </nav>
 <style>
 .acmebloc-topnav { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid #e5e7eb; padding: 0 16px; background: #fff; }
-.acmebloc-topnav a { display: inline-block; padding: 12px 16px; font-size: 14px; font-weight: 500; color: #6b7280; text-decoration: none; border-bottom: 2px solid transparent; }
+.acmebloc-topnav a { display: inline-block; padding: 0.75rem 1rem; font-size: 0.875rem; line-height: 1.25rem; font-weight: 500; color: #6b7280; text-decoration: none; border-bottom: 2px solid transparent; }
 .acmebloc-topnav a:hover { color: #111827; }
 .acmebloc-topnav a.active { color: #4f46e5; border-bottom-color: #4f46e5; }
 </style>
@@ -604,7 +604,7 @@ path = sys.argv[1]
 with open(path) as f:
     content = f.read()
 
-if "MANAGER-NAV-V4" in content:
+if "MANAGER-NAV-V5" in content:
     print("already patched, skipping")
     raise SystemExit(0)
 
@@ -612,7 +612,7 @@ m = re.search(r'<!-- MANAGER-NAV -->.*?</style>\n(<script>.*?</script>\n)?', con
 if not m:
     raise SystemExit("old MANAGER-NAV block not found — aborting")
 
-snippet = """<!-- MANAGER-NAV-V4 -->
+snippet = """<!-- MANAGER-NAV-V5 -->
 <nav class="acmebloc-topnav" aria-label="Manager 메뉴">
     <a href="/dashboard">홈</a>
     <a href="/projects">프로젝트</a>
@@ -623,7 +623,7 @@ snippet = """<!-- MANAGER-NAV-V4 -->
 </nav>
 <style>
 .acmebloc-topnav { display: flex; align-items: center; border-bottom: 1px solid #e5e7eb; padding: 0 16px; background: #fff; }
-.acmebloc-topnav a { display: inline-block; padding: 12px 16px; font-size: 14px; font-weight: 500; color: #6b7280; text-decoration: none; border-bottom: 2px solid transparent; }
+.acmebloc-topnav a { display: inline-block; padding: 0.75rem 1rem; font-size: 0.875rem; line-height: 1.25rem; font-weight: 500; color: #6b7280; text-decoration: none; border-bottom: 2px solid transparent; }
 .acmebloc-topnav a:hover { color: #111827; }
 .acmebloc-topnav a.active { color: #4f46e5; border-bottom-color: #4f46e5; }
 
@@ -638,6 +638,8 @@ header#header, header#header * {
 }
 .header-links a { color: #4f46e5 !important; text-decoration: none !important; }
 .header-links a:hover { text-decoration: underline !important; }
+/* 공간/문서함 그룹을 게시판 메뉴 칸 아래로 — 문서함/설정은 뒤따라오므로 첫 링크만 밀면 됨 */
+.links a[href$="/shelves"] { margin-left: 96px; }
 #header-search-box-input {
   background: #fff !important; border: 1px solid #d1d5db !important; color: #111827 !important;
   border-radius: 0.375rem !important; box-shadow: none !important;
@@ -663,7 +665,8 @@ sudo -u bookstack bash -c "cd $BS && php artisan view:clear"
 
 > **확인 필요** — `header#header`, `.header-links`, `#header-search-box-input` 등은
 > 실제로 복사해 받은 outerHTML 기준이라 신뢰도가 높지만, 적용 후 스크린샷으로
-> 배경색·폰트·검색창이 실제로 바뀌었는지 확인할 것.
+> 배경색·폰트·검색창이 실제로 바뀌었는지 확인할 것. `margin-left: 96px`는 스크린샷
+> 비교로 어림잡은 값이라 픽셀 단위로 안 맞으면 이 숫자만 조정하면 된다.
 
 ---
 
@@ -734,5 +737,5 @@ sudo grep -E "^\s*'(shelf|book|chapter|page)'\s*=>" $BS/lang/ko/entities.php 2>/
   || sudo grep -E "^\s*'(shelf|book|chapter|page)'\s*=>" $BS/resources/lang/ko/entities.php 2>/dev/null
 echo
 echo "=== 게시판 서브메뉴 마커 (1 이상이어야 정상) ==="
-sudo grep -c "MANAGER-NAV-V4" $BS/themes/acmebloc/layouts/parts/header.blade.php
+sudo grep -c "MANAGER-NAV-V5" $BS/themes/acmebloc/layouts/parts/header.blade.php
 ```
