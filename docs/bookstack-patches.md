@@ -27,7 +27,7 @@
 | 8 | Apache vhost | 계정/로그아웃 경로 차단 | 유지 |
 | 9 | `lang/ko/entities.php` | 엔티티 명칭(공간/문서함/섹션/문서) | **재적용 필요** |
 | 10 | 설정 DB (`app-color`) + 커스텀 head | 디자인 톤(색상·폰트) + 로고 숨김 | 유지 |
-| 11 | `themes/acmebloc/layouts/parts/header.blade.php` (5번 갱신) | 게시판 서브메뉴(검색·계정·설정 이동) + 라벨 동기화 | 유지 (※ 아래 주의) |
+| 11 | `themes/acmebloc/layouts/parts/header.blade.php` (5번 갱신) | Manager 메뉴 라벨 동기화 (일감/일정) | 유지 (※ 아래 주의) |
 
 > **※ 뷰 오버라이드 주의** — 5·6번은 삭제되지는 않지만 **낡을 수 있다.** 테마의 복사본이
 > 원본을 완전히 대체하므로, 업그레이드로 원본에 새 마크업이 추가돼도 우리 복사본은 옛날
@@ -569,24 +569,30 @@ sudo -u bookstack bash -c 'cd /var/www/bookstack/app && php artisan config:clear
 
 ---
 
-## 11. 게시판 서브메뉴 (검색·계정·설정 이동) + Manager 메뉴 라벨 동기화 (5번 갱신)
+## 11. 게시판 헤더 — BookStack 원본 그대로 두고 스타일만 통일 + 라벨 동기화 (5번 갱신)
+
+**여기까지의 시행착오:** 처음엔 BookStack 헤더를 통째로 숨기고 검색창/계정/설정을
+Manager가 새로 만든 서브메뉴로 옮기려 했다(빈 슬롯 + JS `appendChild`). 실제로 붙여보니
+①BookStack의 CSP가 nonce 없는 인라인 스크립트를 막아 이동 자체가 실패했고, ②애초에
+**BookStack 원본 헤더가 이미 정확히 원하는 구성**(공간/문서함 왼쪽, 검색 가운데,
+설정+계정 오른쪽)으로 되어 있어서 새로 만들 필요가 없었다 — 사용자가 브라우저에서 직접
+`<header id="header" component="header-mobile-toggle" class="primary-background px-xl grid print-hidden">`
+원본을 복사해서 확인해줬다. **최종 방향: 이 원본 헤더는 그대로 쓰고, `display:none`을
+풀고 색상·폰트만 Manager 톤으로 덮어쓴다.** 커스텀 서브메뉴 구조(`acmebloc-board-subnav`,
+빈 슬롯, 이동 스크립트)는 전부 폐기.
 
 5번에서 넣은 Manager 메뉴바 라벨이 실제 Manager 쪽([Layout.jsx](../src/components/Layout.jsx))과
 어긋나 있었다("일감관리"/"일정관리" vs 실제 "일감"/"일정") — 이번에 맞춘다.
 
-**구성 (사용자 확정, 2026-08-28):**
-- Manager 쪽(다른 페이지) 상단바는 그대로 — 드롭다운 없음.
-- 게시판 화면에서만 두 번째 줄로 "Manager 서브메뉴"를 항상 노출(호버 아님):
-  - 왼쪽: 공간/문서함 링크 — **게시판 메뉴 칸 바로 아래로 정렬** (1번째 줄 항목을
-    전부 같은 폭(88px)으로 고정해서, 5번째 칸인 게시판 밑에 정확히 오도록 계산).
-  - 가운데: BookStack 실제 검색창을 **그대로(placeholder 아님)** 이 자리로 옮김.
-  - 오른쪽 끝: 계정 메뉴(내 정보) + 설정 메뉴(어드민에게만 원래 보이던 것 그대로)를
-    같은 자리에 묶어서 옮김 — 위치만 이동, 권한 로직은 BookStack 것 그대로라 어드민
-    아니면 설정 항목 자체가 없다.
-- BookStack 자체 `<header>`(로고·자체 메뉴·검색·계정 다 포함된 원본)는 위 세 가지를
-  실제 DOM 그대로 빼낸 뒤 전체를 숨긴다 — 검색창/계정 메뉴는 로그인 사용자별 데이터
-  (CSRF 토큰, 권한 등)로 렌더링되는 살아있는 요소라 텍스트로 흉내내지 않고, 스크립트로
-  실제 엘리먼트를 옮겨 붙인다.
+**실제 확인된 BookStack 헤더 구조(요약):**
+- `header#header.primary-background` — 이 `primary-background` 클래스가 10번에서 넣은
+  `app-color`를 배경 채움으로 그대로 쓰고 있어서 진한 보라색으로 보였던 것.
+- `.logo` / `.logo-image` — 로고. 10번에서 이미 정확히 이 클래스를 숨기고 있었다(그대로 둠).
+- `form.search-box` 안의 `#header-search-box-input` / `#header-search-box-button` — 검색창.
+- `nav.header-links` 안에 `공간`(`/board/shelves`)·`문서함`(`/board/books`)·`설정`
+  (`/board/settings`, 어드민에게만 렌더링됨) 링크 + `.dropdown-container`
+  (계정 드롭다운, `.user-name`)이 전부 형제 요소로 나란히 있다. 이 순서·배치 자체가
+  이미 원하는 좌/중앙/우 구성이라 별도 정렬 CSS가 필요 없다.
 
 ```bash
 BS=/var/www/bookstack/app
@@ -598,7 +604,7 @@ path = sys.argv[1]
 with open(path) as f:
     content = f.read()
 
-if "MANAGER-BOARD-SUBNAV-V2" in content:
+if "MANAGER-NAV-V4" in content:
     print("already patched, skipping")
     raise SystemExit(0)
 
@@ -606,7 +612,7 @@ m = re.search(r'<!-- MANAGER-NAV -->.*?</style>\n(<script>.*?</script>\n)?', con
 if not m:
     raise SystemExit("old MANAGER-NAV block not found — aborting")
 
-snippet = """<!-- MANAGER-NAV -->
+snippet = """<!-- MANAGER-NAV-V4 -->
 <nav class="acmebloc-topnav" aria-label="Manager 메뉴">
     <a href="/dashboard">홈</a>
     <a href="/projects">프로젝트</a>
@@ -615,67 +621,34 @@ snippet = """<!-- MANAGER-NAV -->
     <a href="/board" class="active">게시판</a>
     <a href="/mypage">마이페이지</a>
 </nav>
-<!-- MANAGER-BOARD-SUBNAV-V2 -->
-<div class="acmebloc-board-subnav">
-    <div class="acmebloc-board-subnav-left">
-        <a href="/board/shelves">공간</a>
-        <a href="/board/books">문서함</a>
-    </div>
-    <div class="acmebloc-board-subnav-center" id="acmebloc-search-slot"></div>
-    <div class="acmebloc-board-subnav-right" id="acmebloc-account-slot"></div>
-</div>
 <style>
 .acmebloc-topnav { display: flex; align-items: center; border-bottom: 1px solid #e5e7eb; padding: 0 16px; background: #fff; }
-.acmebloc-topnav a { display: inline-block; width: 88px; text-align: center; padding: 12px 0; font-size: 14px; font-weight: 500; color: #6b7280; text-decoration: none; border-bottom: 2px solid transparent; }
+.acmebloc-topnav a { display: inline-block; padding: 12px 16px; font-size: 14px; font-weight: 500; color: #6b7280; text-decoration: none; border-bottom: 2px solid transparent; }
 .acmebloc-topnav a:hover { color: #111827; }
 .acmebloc-topnav a.active { color: #4f46e5; border-bottom-color: #4f46e5; }
 
-.acmebloc-board-subnav { display: flex; align-items: center; border-bottom: 1px solid #e5e7eb; background: #f9fafb; padding: 0 16px; min-height: 44px; }
-.acmebloc-board-subnav-left { display: flex; align-items: center; gap: 4px; margin-left: 352px; }
-.acmebloc-board-subnav-left a { padding: 8px 12px; font-size: 13px; font-weight: 500; color: #4f46e5; text-decoration: none; }
-.acmebloc-board-subnav-left a:hover { text-decoration: underline; }
-.acmebloc-board-subnav-center { flex: 1; display: flex; justify-content: center; }
-.acmebloc-board-subnav-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
-
-header { display: none !important; }
-
-#acmebloc-search-slot input[type="search"],
-#acmebloc-search-slot input[type="text"] {
+/* BookStack 원본 헤더는 그대로 두고 톤만 Manager에 맞춘다 (구조/DOM은 안 건드림) */
+header#header {
+  background: #f9fafb !important;
+  border-bottom: 1px solid #e5e7eb !important;
+  box-shadow: none !important;
+}
+header#header, header#header * {
+  font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji" !important;
+}
+.header-links a { color: #4f46e5 !important; text-decoration: none !important; }
+.header-links a:hover { text-decoration: underline !important; }
+#header-search-box-input {
   background: #fff !important; border: 1px solid #d1d5db !important; color: #111827 !important;
   border-radius: 0.375rem !important; box-shadow: none !important;
 }
-#acmebloc-search-slot input::placeholder { color: #9ca3af !important; }
-#acmebloc-search-slot input:focus {
+#header-search-box-input::placeholder { color: #9ca3af !important; }
+#header-search-box-input:focus {
   outline: none !important; border-color: #4f46e5 !important; box-shadow: 0 0 0 1px #4f46e5 !important;
 }
-#acmebloc-account-slot { font-size: 13px; }
+#header-search-box-button { color: #6b7280 !important; }
+.dropdown-container .user-name { color: #4f46e5 !important; }
 </style>
-<script>
-document.addEventListener('DOMContentLoaded', function () {
-  function moveFirstMatch(selectors, slot) {
-    for (var i = 0; i < selectors.length; i++) {
-      var el = document.querySelector(selectors[i]);
-      if (el) { slot.appendChild(el); return el; }
-    }
-    return null;
-  }
-  var searchSlot = document.getElementById('acmebloc-search-slot');
-  var accountSlot = document.getElementById('acmebloc-account-slot');
-
-  var moved = moveFirstMatch([
-    'header form.search-box', 'header .search-box', 'header form[role="search"]',
-    'header input[type="search"]', 'header .search'
-  ], searchSlot);
-  if (!moved) console.warn('acmebloc: 검색창을 못 찾음 — 셀렉터 조정 필요');
-
-  moveFirstMatch(['header a[href*="/settings"]'], accountSlot);
-
-  var accountMoved = moveFirstMatch([
-    'header .dropdown-container', 'header .user-menu', 'header [class*="user"]'
-  ], accountSlot);
-  if (!accountMoved) console.warn('acmebloc: 계정 메뉴를 못 찾음 — 셀렉터 조정 필요');
-});
-</script>
 """
 
 content = content[:m.start()] + snippet + content[m.end():]
@@ -688,11 +661,9 @@ sudo chown -R bookstack:bookstack $BS/themes/acmebloc
 sudo -u bookstack bash -c "cd $BS && php artisan view:clear"
 ```
 
-> **확인 필요 (제일 리스크 큰 부분)** — 검색창/계정 메뉴/설정 메뉴의 실제 셀렉터는
-> BookStack 소스 기준 추정치다. 브라우저에서 `/board` 접속 후 개발자 도구 콘솔을 열어
-> 경고("acmebloc: ... 못 찾음")가 뜨는지 확인할 것. 뜨면 콘솔에
-> `copy(document.querySelector('header').outerHTML)`를 실행해 클립보드 내용을
-> 붙여넣어줄 것 — 정확한 구조를 보고 셀렉터만 다시 맞춘다.
+> **확인 필요** — `header#header`, `.header-links`, `#header-search-box-input` 등은
+> 실제로 복사해 받은 outerHTML 기준이라 신뢰도가 높지만, 적용 후 스크린샷으로
+> 배경색·폰트·검색창이 실제로 바뀌었는지 확인할 것.
 
 ---
 
@@ -763,5 +734,5 @@ sudo grep -E "^\s*'(shelf|book|chapter|page)'\s*=>" $BS/lang/ko/entities.php 2>/
   || sudo grep -E "^\s*'(shelf|book|chapter|page)'\s*=>" $BS/resources/lang/ko/entities.php 2>/dev/null
 echo
 echo "=== 게시판 서브메뉴 마커 (1 이상이어야 정상) ==="
-sudo grep -c "MANAGER-BOARD-SUBNAV-V2" $BS/themes/acmebloc/layouts/parts/header.blade.php
+sudo grep -c "MANAGER-NAV-V4" $BS/themes/acmebloc/layouts/parts/header.blade.php
 ```
