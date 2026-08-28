@@ -253,14 +253,14 @@ function TaskFormPage() {
 
   if (loadError) {
     return (
-      <div className="mx-auto w-full max-w-3xl px-4 py-8">
+      <div className="mx-auto w-full max-w-[1400px] px-4 py-8">
         <p className="text-sm text-red-600 dark:text-red-400">{loadError}</p>
       </div>
     )
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-8">
+    <div className="mx-auto w-full max-w-[1400px] px-4 py-8">
       <button
         type="button"
         onClick={requestGoToTasks}

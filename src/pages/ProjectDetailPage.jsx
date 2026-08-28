@@ -182,7 +182,7 @@ function ProjectDetailPage() {
 
   if (notFound) {
     return (
-      <div className="mx-auto w-full max-w-3xl px-4 py-8">
+      <div className="mx-auto w-full max-w-[1400px] px-4 py-8">
         <p className="py-12 text-center text-gray-500 dark:text-gray-400">프로젝트를 찾을 수 없습니다.</p>
       </div>
     )
@@ -190,14 +190,14 @@ function ProjectDetailPage() {
 
   if (!project) {
     return (
-      <div className="mx-auto w-full max-w-3xl px-4 py-8">
+      <div className="mx-auto w-full max-w-[1400px] px-4 py-8">
         {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
       </div>
     )
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-8">
+    <div className="mx-auto w-full max-w-[1400px] px-4 py-8">
       {editing ? (
         <form onSubmit={save} className="flex flex-col gap-3">
           <input

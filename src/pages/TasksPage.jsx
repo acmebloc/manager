@@ -215,7 +215,7 @@ function TasksPage() {
   if (loading) return null
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-8">
+    <div className="mx-auto w-full max-w-[1400px] px-4 py-8">
       <h2 className="mb-4 text-2xl font-semibold text-gray-900 dark:text-white">일감</h2>
 
       {error && <p className="mb-4 text-sm text-red-600 dark:text-red-400">{error}</p>}

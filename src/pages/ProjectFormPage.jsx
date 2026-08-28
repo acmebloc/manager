@@ -49,7 +49,7 @@ function ProjectFormPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-8">
+    <div className="mx-auto w-full max-w-[1400px] px-4 py-8">
       <h2 className="mb-6 text-2xl font-semibold text-gray-900 dark:text-white">새 프로젝트</h2>
 
       <form onSubmit={submit} className="flex flex-col gap-4">

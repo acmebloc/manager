@@ -68,7 +68,7 @@ function ProjectsPage() {
   if (loading) return null
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-8">
+    <div className="mx-auto w-full max-w-[1400px] px-4 py-8">
       <div className="mb-6 flex items-center justify-between">
         <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">프로젝트</h2>
         <Link

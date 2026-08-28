@@ -38,7 +38,7 @@ function SchedulePage() {
   if (loading) return null
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8">
+    <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-8 px-4 py-8">
       <section>
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">일정</h2>
