@@ -25,6 +25,9 @@
 | 6 | `themes/acmebloc/layouts/parts/header-user-menu.blade.php` | 계정 메뉴 축소 | 유지 (※ 아래 주의) |
 | 7 | `app/Users/Models/User.php` | 아바타·이름 실시간 연동 | **재적용 필요** |
 | 8 | Apache vhost | 계정/로그아웃 경로 차단 | 유지 |
+| 9 | `lang/ko/entities.php` | 엔티티 명칭(공간/문서함/섹션/문서) | **재적용 필요** |
+| 10 | 설정 DB (`app-color`) + 커스텀 head | 디자인 톤(색상·폰트) + 로고 숨김 | 유지 |
+| 11 | `themes/acmebloc/layouts/parts/header.blade.php` (5번 갱신) | 게시판 서브메뉴 고정 노출 + 라벨 동기화 | 유지 (※ 아래 주의) |
 
 > **※ 뷰 오버라이드 주의** — 5·6번은 삭제되지는 않지만 **낡을 수 있다.** 테마의 복사본이
 > 원본을 완전히 대체하므로, 업그레이드로 원본에 새 마크업이 추가돼도 우리 복사본은 옛날
@@ -429,6 +432,214 @@ Manager 세션을 기준으로 다시 로그인시키므로 실질적인 위험�
 
 ---
 
+## 9. 엔티티 명칭 변경 (책꽂이/책/챕터/페이지 → 공간/문서함/섹션/문서)
+
+BookStack의 4단 구조(Shelf > Book > Chapter > Page) 자체는 그대로 두고, 화면에 보이는
+한국어 명칭만 바꾼다: **공간 > 문서함 > 섹션 > 문서**. 문서함 안에서 섹션·문서가
+필수로 연결되지 않는 것(섹션 없이 문서함에 문서를 바로 넣을 수 있는 것)은 BookStack
+기본 동작 그대로 유지한다 — 구조 변경 없음, 표시 문구만 변경.
+
+번역 파일 위치는 BookStack 버전에 따라 `lang/ko/entities.php`(최신, Laravel 9+ 구조)
+또는 `resources/lang/ko/entities.php`(구버전) 중 하나다. 아래 스크립트가 둘 다 찾아본다.
+
+**값 문자열이 아니라 키 이름으로 치환**하므로, 지금 값이 정상(챕터)이든 화면에 보이는
+알려진 오역(새창)이든 상관없이 안전하게 덮어쓴다. 각 키를 찾았는지 결과로 출력하니,
+"NOT FOUND"로 나온 키가 있으면 그 부분만 캡처해서 알려줄 것 — 다음 라운드에서 마저 고친다.
+
+```bash
+BS=/var/www/bookstack/app
+LANG_FILE=""
+for candidate in "$BS/lang/ko/entities.php" "$BS/resources/lang/ko/entities.php"; do
+  if sudo test -f "$candidate"; then LANG_FILE="$candidate"; break; fi
+done
+if [ -z "$LANG_FILE" ]; then
+  echo "entities.php를 못 찾았습니다 — 경로를 확인해주세요"; exit 1
+fi
+echo "대상 파일: $LANG_FILE"
+
+sudo python3 - "$LANG_FILE" <<'PYEOF'
+import re, sys
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+
+MAPPING = {
+    'shelf': '공간',
+    'shelves': '공간',
+    'x_shelves': '공간 :count개|총 :count개',
+    'shelves_empty': '만든 공간이 없습니다.',
+    'shelves_create': '공간 만들기',
+    'shelves_popular': '많이 읽은 공간',
+    'shelves_new': '새로운 공간',
+    'shelves_books': '이 공간에 있는 문서함들',
+    'shelves_add_books': '이 공간에 문서함 추가',
+    'shelves_edit_named': '공간 편집 :name',
+    'shelves_delete': '공간 삭제',
+    'shelves_permissions': '공간 권한',
+    'book': '문서함',
+    'books': '문서함',
+    'x_books': '문서함 :count개|총 :count개',
+    'books_empty': '만든 문서함이 없습니다.',
+    'books_popular': '많이 읽은 문서함',
+    'books_create': '문서함 만들기',
+    'books_delete': '문서함 삭제하기',
+    'books_edit': '문서함 바꾸기',
+    'books_permissions': '문서함 권한',
+    'books_sort': '문서함 내용 정렬',
+    'chapter': '섹션',
+    'chapters': '섹션',
+    'x_chapters': '섹션 :count개|총 :count개',
+    'chapters_create': '섹션 만들기',
+    'chapters_delete': '섹션 삭제하기',
+    'chapters_edit': '섹션 수정하기',
+    'chapters_permissions': '섹션 권한',
+    'page': '문서',
+    'pages': '문서',
+    'x_pages': '문서 :count개|총 :count개',
+    'pages_delete': '문서 삭제하기',
+    'pages_permissions': '문서 권한',
+}
+
+found, missing = [], []
+for key, value in MAPPING.items():
+    pattern = re.compile(r"(['\"])" + re.escape(key) + r"\1\s*=>\s*(['\"]).*?\2\s*,")
+    replacement = f"'{key}' => '{value}',"
+    content, count = pattern.subn(replacement, content, count=1)
+    (found if count else missing).append(key)
+
+with open(path, 'w') as f:
+    f.write(content)
+
+print(f"치환됨 ({len(found)}): {', '.join(found)}")
+if missing:
+    print(f"NOT FOUND ({len(missing)}) — 이 키들은 확인 필요: {', '.join(missing)}")
+PYEOF
+
+sudo -u bookstack bash -c "cd $BS && php artisan config:clear && php artisan view:clear"
+```
+
+**업그레이드 때마다 재적용 필요** — 코어 언어 파일 직접 수정이라 `git pull`로 되돌아간다.
+
+---
+
+## 10. 디자인 톤 통일 (색상·폰트) + 로고 숨김
+
+Manager의 톤(인디고 `#4f46e5` 포인트 컬러, 시스템 기본 폰트, 톤 다운된 그레이 배경)을
+게시판에도 입힌다. BookStack은 브랜드 컬러를 코어 수정 없이 설정으로 바꿀 수 있는
+`app-color`/`app-color-light` 값을 지원하므로(1번 카테고리, 제일 안전함) 이걸 우선
+쓰고, 폰트·로고만 커스텀 head CSS로 보완한다.
+
+```bash
+sudo tee /tmp/acmebloc-design.php > /dev/null <<'EOF'
+<?php
+require '/var/www/bookstack/app/vendor/autoload.php';
+$app = require '/var/www/bookstack/app/bootstrap/app.php';
+$app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+
+$svc = app(\BookStack\Settings\SettingService::class);
+
+$svc->put('app-color', '#4f46e5');       // Tailwind indigo-600, Manager 포인트 컬러
+$svc->put('app-color-light', '#eef2ff'); // indigo-50, 옅은 배경/hover용
+
+$marker = 'ACMEBLOC-DESIGN-TONE';
+$head = (string) $svc->get('app-custom-head', '');
+if (str_contains($head, $marker)) {
+    echo "design tone css: already set, skipping\n";
+} else {
+    $css = "\n<!-- {$marker} -->\n<style>\n"
+         . "  /* Manager와 같은 시스템 기본 폰트로 통일 (Tailwind 기본 font-sans 스택) */\n"
+         . "  body { font-family: ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\"; }\n"
+         . "  /* 로고 숨김 — Manager 메뉴바에 이미 브랜딩이 있어 중복 노출 안 함 */\n"
+         . "  .logo, header .logo-image, a.logo { display: none !important; }\n"
+         . "</style>\n";
+    $svc->put('app-custom-head', $head . $css);
+    echo "design tone css: appended\n";
+}
+EOF
+
+sudo -u bookstack php /tmp/acmebloc-design.php
+sudo rm /tmp/acmebloc-design.php
+sudo -u bookstack bash -c 'cd /var/www/bookstack/app && php artisan config:clear'
+```
+
+> **확인 필요** — `app-color`/`app-color-light` 설정 키 이름과 로고 셀렉터(`.logo` 등)는
+> BookStack 소스 기준으로 넣은 값이라, 실제 설치본과 미묘하게 다를 수 있다. 적용 후
+> 스크린샷으로 확인해서 색이 안 바뀌거나 로고가 안 사라지면 알려줄 것 — 실제 셀렉터·
+> 설정 키를 다시 맞춘다.
+
+---
+
+## 11. 게시판 서브메뉴 고정 노출 + Manager 메뉴 라벨 동기화 (5번 갱신)
+
+5번에서 넣은 Manager 메뉴바 라벨이 실제 Manager 쪽([Layout.jsx](../src/components/Layout.jsx))과
+어긋나 있었다("일감관리"/"일정관리" vs 실제 "일감"/"일정") — 이번에 맞춘다. 동시에
+**Manager 쪽 상단바에는 드롭다운을 넣지 않고**, 게시판 화면에서만 BookStack 자체 섹션
+(공간/문서함/검색)을 두 번째 줄에 항상 펼쳐진 상태로(호버 아님) 보여준다. BookStack
+자체 상단 메뉴는 중복되므로 숨긴다. 계정 메뉴(내 정보)는 6번 그대로 우측 위치 변경 없음.
+
+```bash
+BS=/var/www/bookstack/app
+PATCH="$BS/themes/acmebloc/layouts/parts/header.blade.php"
+
+sudo python3 - "$PATCH" <<'PYEOF'
+import re, sys
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+
+if "MANAGER-BOARD-SUBNAV" in content:
+    print("already patched, skipping")
+    raise SystemExit(0)
+
+m = re.search(r'<!-- MANAGER-NAV -->.*?</style>\n', content, re.S)
+if not m:
+    raise SystemExit("old MANAGER-NAV block not found — aborting")
+
+snippet = """<!-- MANAGER-NAV -->
+<nav class="acmebloc-topnav" aria-label="Manager 메뉴">
+    <a href="/dashboard">홈</a>
+    <a href="/projects">프로젝트</a>
+    <a href="/tasks">일감</a>
+    <a href="/schedule">일정</a>
+    <a href="/board" class="active">게시판</a>
+    <a href="/mypage">마이페이지</a>
+</nav>
+<!-- MANAGER-BOARD-SUBNAV -->
+<nav class="acmebloc-board-subnav" aria-label="게시판 메뉴">
+    <a href="/board/shelves">공간</a>
+    <a href="/board/books">문서함</a>
+    <a href="/board/search">검색</a>
+</nav>
+<style>
+.acmebloc-topnav { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid #e5e7eb; padding: 0 16px; background: #fff; }
+.acmebloc-topnav a { display: inline-block; padding: 12px 16px; font-size: 14px; font-weight: 500; color: #6b7280; text-decoration: none; border-bottom: 2px solid transparent; }
+.acmebloc-topnav a:hover { color: #111827; }
+.acmebloc-topnav a.active { color: #4f46e5; border-bottom-color: #4f46e5; }
+.acmebloc-board-subnav { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid #e5e7eb; padding: 0 16px; background: #f9fafb; }
+.acmebloc-board-subnav a { display: inline-block; padding: 8px 12px; font-size: 13px; font-weight: 500; color: #4f46e5; text-decoration: none; }
+.acmebloc-board-subnav a:hover { text-decoration: underline; }
+/* BookStack 자체 상단 메뉴는 위 서브메뉴와 중복되므로 숨김 */
+header nav.top-menu, header .top-menu { display: none !important; }
+</style>
+"""
+
+content = content[:m.start()] + snippet + content[m.end():]
+with open(path, 'w') as f:
+    f.write(content)
+print("patched")
+PYEOF
+
+sudo chown -R bookstack:bookstack $BS/themes/acmebloc
+sudo -u bookstack bash -c "cd $BS && php artisan view:clear"
+```
+
+> **확인 필요** — BookStack 자체 상단 메뉴를 감싸는 실제 클래스(`nav.top-menu` 등)는
+> 소스 기준 추정치다. 적용 후에도 BookStack 자체 메뉴가 안 사라지면, 브라우저 개발자
+> 도구로 그 메뉴를 감싼 엘리먼트의 class를 확인해서 알려줄 것 — 셀렉터만 좁혀서 다시
+> 맞춘다.
+
+---
+
 ## 업그레이드 후 점검
 
 BookStack을 `git pull`로 올린 뒤에는 이 순서로 확인한다.
@@ -490,4 +701,11 @@ sudo -u bookstack git -C $BS status --porcelain
 echo
 echo "=== .env ==="
 sudo grep -E '^(APP_THEME|APP_LANG|APP_DEFAULT_DARK_MODE|AUTH_AUTO_INITIATE|MANAGER_ORIGIN|SESSION_LIFETIME)=' $BS/.env
+echo
+echo "=== 엔티티 명칭 (공간/문서함/섹션/문서로 바뀌었는지) ==="
+sudo grep -E "^\s*'(shelf|book|chapter|page)'\s*=>" $BS/lang/ko/entities.php 2>/dev/null \
+  || sudo grep -E "^\s*'(shelf|book|chapter|page)'\s*=>" $BS/resources/lang/ko/entities.php 2>/dev/null
+echo
+echo "=== 게시판 서브메뉴 마커 (1 이상이어야 정상) ==="
+sudo grep -c "MANAGER-BOARD-SUBNAV" $BS/themes/acmebloc/layouts/parts/header.blade.php
 ```
