@@ -27,7 +27,7 @@
 | 8 | Apache vhost | 계정/로그아웃 경로 차단 | 유지 |
 | 9 | `lang/ko/entities.php` | 엔티티 명칭(공간/문서함/섹션/문서) | **재적용 필요** |
 | 10 | 설정 DB (`app-color`) + 커스텀 head | 디자인 톤(색상·폰트) + 로고 숨김 | 유지 |
-| 11 | `themes/acmebloc/layouts/parts/header.blade.php` (5번 갱신) | 게시판 서브메뉴 고정 노출 + 라벨 동기화 | 유지 (※ 아래 주의) |
+| 11 | `themes/acmebloc/layouts/parts/header.blade.php` (5번 갱신) | 게시판 서브메뉴(검색·계정·설정 이동) + 라벨 동기화 | 유지 (※ 아래 주의) |
 
 > **※ 뷰 오버라이드 주의** — 5·6번은 삭제되지는 않지만 **낡을 수 있다.** 테마의 복사본이
 > 원본을 완전히 대체하므로, 업그레이드로 원본에 새 마크업이 추가돼도 우리 복사본은 옛날
@@ -569,13 +569,24 @@ sudo -u bookstack bash -c 'cd /var/www/bookstack/app && php artisan config:clear
 
 ---
 
-## 11. 게시판 서브메뉴 고정 노출 + Manager 메뉴 라벨 동기화 (5번 갱신)
+## 11. 게시판 서브메뉴 (검색·계정·설정 이동) + Manager 메뉴 라벨 동기화 (5번 갱신)
 
 5번에서 넣은 Manager 메뉴바 라벨이 실제 Manager 쪽([Layout.jsx](../src/components/Layout.jsx))과
-어긋나 있었다("일감관리"/"일정관리" vs 실제 "일감"/"일정") — 이번에 맞춘다. 동시에
-**Manager 쪽 상단바에는 드롭다운을 넣지 않고**, 게시판 화면에서만 BookStack 자체 섹션
-(공간/문서함/검색)을 두 번째 줄에 항상 펼쳐진 상태로(호버 아님) 보여준다. BookStack
-자체 상단 메뉴는 중복되므로 숨긴다. 계정 메뉴(내 정보)는 6번 그대로 우측 위치 변경 없음.
+어긋나 있었다("일감관리"/"일정관리" vs 실제 "일감"/"일정") — 이번에 맞춘다.
+
+**구성 (사용자 확정, 2026-08-28):**
+- Manager 쪽(다른 페이지) 상단바는 그대로 — 드롭다운 없음.
+- 게시판 화면에서만 두 번째 줄로 "Manager 서브메뉴"를 항상 노출(호버 아님):
+  - 왼쪽: 공간/문서함 링크 — **게시판 메뉴 칸 바로 아래로 정렬** (1번째 줄 항목을
+    전부 같은 폭(88px)으로 고정해서, 5번째 칸인 게시판 밑에 정확히 오도록 계산).
+  - 가운데: BookStack 실제 검색창을 **그대로(placeholder 아님)** 이 자리로 옮김.
+  - 오른쪽 끝: 계정 메뉴(내 정보) + 설정 메뉴(어드민에게만 원래 보이던 것 그대로)를
+    같은 자리에 묶어서 옮김 — 위치만 이동, 권한 로직은 BookStack 것 그대로라 어드민
+    아니면 설정 항목 자체가 없다.
+- BookStack 자체 `<header>`(로고·자체 메뉴·검색·계정 다 포함된 원본)는 위 세 가지를
+  실제 DOM 그대로 빼낸 뒤 전체를 숨긴다 — 검색창/계정 메뉴는 로그인 사용자별 데이터
+  (CSRF 토큰, 권한 등)로 렌더링되는 살아있는 요소라 텍스트로 흉내내지 않고, 스크립트로
+  실제 엘리먼트를 옮겨 붙인다.
 
 ```bash
 BS=/var/www/bookstack/app
@@ -587,11 +598,11 @@ path = sys.argv[1]
 with open(path) as f:
     content = f.read()
 
-if "MANAGER-BOARD-SUBNAV" in content:
+if "MANAGER-BOARD-SUBNAV-V2" in content:
     print("already patched, skipping")
     raise SystemExit(0)
 
-m = re.search(r'<!-- MANAGER-NAV -->.*?</style>\n', content, re.S)
+m = re.search(r'<!-- MANAGER-NAV -->.*?</style>\n(<script>.*?</script>\n)?', content, re.S)
 if not m:
     raise SystemExit("old MANAGER-NAV block not found — aborting")
 
@@ -604,23 +615,67 @@ snippet = """<!-- MANAGER-NAV -->
     <a href="/board" class="active">게시판</a>
     <a href="/mypage">마이페이지</a>
 </nav>
-<!-- MANAGER-BOARD-SUBNAV -->
-<nav class="acmebloc-board-subnav" aria-label="게시판 메뉴">
-    <a href="/board/shelves">공간</a>
-    <a href="/board/books">문서함</a>
-    <a href="/board/search">검색</a>
-</nav>
+<!-- MANAGER-BOARD-SUBNAV-V2 -->
+<div class="acmebloc-board-subnav">
+    <div class="acmebloc-board-subnav-left">
+        <a href="/board/shelves">공간</a>
+        <a href="/board/books">문서함</a>
+    </div>
+    <div class="acmebloc-board-subnav-center" id="acmebloc-search-slot"></div>
+    <div class="acmebloc-board-subnav-right" id="acmebloc-account-slot"></div>
+</div>
 <style>
-.acmebloc-topnav { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid #e5e7eb; padding: 0 16px; background: #fff; }
-.acmebloc-topnav a { display: inline-block; padding: 12px 16px; font-size: 14px; font-weight: 500; color: #6b7280; text-decoration: none; border-bottom: 2px solid transparent; }
+.acmebloc-topnav { display: flex; align-items: center; border-bottom: 1px solid #e5e7eb; padding: 0 16px; background: #fff; }
+.acmebloc-topnav a { display: inline-block; width: 88px; text-align: center; padding: 12px 0; font-size: 14px; font-weight: 500; color: #6b7280; text-decoration: none; border-bottom: 2px solid transparent; }
 .acmebloc-topnav a:hover { color: #111827; }
 .acmebloc-topnav a.active { color: #4f46e5; border-bottom-color: #4f46e5; }
-.acmebloc-board-subnav { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid #e5e7eb; padding: 0 16px; background: #f9fafb; }
-.acmebloc-board-subnav a { display: inline-block; padding: 8px 12px; font-size: 13px; font-weight: 500; color: #4f46e5; text-decoration: none; }
-.acmebloc-board-subnav a:hover { text-decoration: underline; }
-/* BookStack 자체 상단 메뉴는 위 서브메뉴와 중복되므로 숨김 */
-header nav.top-menu, header .top-menu { display: none !important; }
+
+.acmebloc-board-subnav { display: flex; align-items: center; border-bottom: 1px solid #e5e7eb; background: #f9fafb; padding: 0 16px; min-height: 44px; }
+.acmebloc-board-subnav-left { display: flex; align-items: center; gap: 4px; margin-left: 352px; }
+.acmebloc-board-subnav-left a { padding: 8px 12px; font-size: 13px; font-weight: 500; color: #4f46e5; text-decoration: none; }
+.acmebloc-board-subnav-left a:hover { text-decoration: underline; }
+.acmebloc-board-subnav-center { flex: 1; display: flex; justify-content: center; }
+.acmebloc-board-subnav-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+
+header { display: none !important; }
+
+#acmebloc-search-slot input[type="search"],
+#acmebloc-search-slot input[type="text"] {
+  background: #fff !important; border: 1px solid #d1d5db !important; color: #111827 !important;
+  border-radius: 0.375rem !important; box-shadow: none !important;
+}
+#acmebloc-search-slot input::placeholder { color: #9ca3af !important; }
+#acmebloc-search-slot input:focus {
+  outline: none !important; border-color: #4f46e5 !important; box-shadow: 0 0 0 1px #4f46e5 !important;
+}
+#acmebloc-account-slot { font-size: 13px; }
 </style>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  function moveFirstMatch(selectors, slot) {
+    for (var i = 0; i < selectors.length; i++) {
+      var el = document.querySelector(selectors[i]);
+      if (el) { slot.appendChild(el); return el; }
+    }
+    return null;
+  }
+  var searchSlot = document.getElementById('acmebloc-search-slot');
+  var accountSlot = document.getElementById('acmebloc-account-slot');
+
+  var moved = moveFirstMatch([
+    'header form.search-box', 'header .search-box', 'header form[role="search"]',
+    'header input[type="search"]', 'header .search'
+  ], searchSlot);
+  if (!moved) console.warn('acmebloc: 검색창을 못 찾음 — 셀렉터 조정 필요');
+
+  moveFirstMatch(['header a[href*="/settings"]'], accountSlot);
+
+  var accountMoved = moveFirstMatch([
+    'header .dropdown-container', 'header .user-menu', 'header [class*="user"]'
+  ], accountSlot);
+  if (!accountMoved) console.warn('acmebloc: 계정 메뉴를 못 찾음 — 셀렉터 조정 필요');
+});
+</script>
 """
 
 content = content[:m.start()] + snippet + content[m.end():]
@@ -633,10 +688,11 @@ sudo chown -R bookstack:bookstack $BS/themes/acmebloc
 sudo -u bookstack bash -c "cd $BS && php artisan view:clear"
 ```
 
-> **확인 필요** — BookStack 자체 상단 메뉴를 감싸는 실제 클래스(`nav.top-menu` 등)는
-> 소스 기준 추정치다. 적용 후에도 BookStack 자체 메뉴가 안 사라지면, 브라우저 개발자
-> 도구로 그 메뉴를 감싼 엘리먼트의 class를 확인해서 알려줄 것 — 셀렉터만 좁혀서 다시
-> 맞춘다.
+> **확인 필요 (제일 리스크 큰 부분)** — 검색창/계정 메뉴/설정 메뉴의 실제 셀렉터는
+> BookStack 소스 기준 추정치다. 브라우저에서 `/board` 접속 후 개발자 도구 콘솔을 열어
+> 경고("acmebloc: ... 못 찾음")가 뜨는지 확인할 것. 뜨면 콘솔에
+> `copy(document.querySelector('header').outerHTML)`를 실행해 클립보드 내용을
+> 붙여넣어줄 것 — 정확한 구조를 보고 셀렉터만 다시 맞춘다.
 
 ---
 
@@ -707,5 +763,5 @@ sudo grep -E "^\s*'(shelf|book|chapter|page)'\s*=>" $BS/lang/ko/entities.php 2>/
   || sudo grep -E "^\s*'(shelf|book|chapter|page)'\s*=>" $BS/resources/lang/ko/entities.php 2>/dev/null
 echo
 echo "=== 게시판 서브메뉴 마커 (1 이상이어야 정상) ==="
-sudo grep -c "MANAGER-BOARD-SUBNAV" $BS/themes/acmebloc/layouts/parts/header.blade.php
+sudo grep -c "MANAGER-BOARD-SUBNAV-V2" $BS/themes/acmebloc/layouts/parts/header.blade.php
 ```
