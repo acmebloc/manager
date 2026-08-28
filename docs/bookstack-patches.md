@@ -29,6 +29,7 @@
 | 10 | 설정 DB (`app-color`) + 커스텀 head | 디자인 톤(색상·폰트) + 로고 숨김 | 유지 |
 | 11 | `themes/acmebloc/layouts/parts/header.blade.php` (5번 갱신) | Manager 메뉴 라벨 동기화 (일감/일정) | 유지 (※ 아래 주의) |
 | 12 | `themes/acmebloc/layouts/parts/header-links(-shelves).blade.php`, `header.blade.php` | 로고 삭제 + 공간/문서함 실제 이동 | 유지 (※ 아래 주의) |
+| 13 | 설정 DB (커스텀 head) | 파비콘을 Manager와 통일 | 유지 |
 
 > **※ 뷰 오버라이드 주의** — 5·6번은 삭제되지는 않지만 **낡을 수 있다.** 테마의 복사본이
 > 원본을 완전히 대체하므로, 업그레이드로 원본에 새 마크업이 추가돼도 우리 복사본은 옛날
@@ -605,7 +606,7 @@ path = sys.argv[1]
 with open(path) as f:
     content = f.read()
 
-if "MANAGER-NAV-V7" in content:
+if "MANAGER-NAV-V8" in content:
     print("already patched, skipping")
     raise SystemExit(0)
 
@@ -613,7 +614,7 @@ m = re.search(r'<!-- MANAGER-NAV(-V\d+)? -->.*?</style>\n(<script>.*?</script>\n
 if not m:
     raise SystemExit("old MANAGER-NAV block not found — aborting")
 
-snippet = """<!-- MANAGER-NAV-V7 -->
+snippet = """<!-- MANAGER-NAV-V8 -->
 <nav class="acmebloc-topnav" aria-label="Manager 메뉴">
     <a href="/dashboard">홈</a>
     <a href="/projects">프로젝트</a>
@@ -641,8 +642,8 @@ header#header, header#header * {
 .header-links a:hover { text-decoration: underline !important; }
 /* 공간/문서함은 12번에서 로고 자리(첫 번째 flex 그룹)로 실제 이동시킨다 — 그 그룹을
    게시판 메뉴 칸 아래로 정렬 */
-.acmebloc-header-shelves { display: flex; align-items: center; gap: 0.75rem; margin-left: 96px; }
-.acmebloc-header-shelves a { display: inline-flex; align-items: center; gap: 0.25rem; color: #4f46e5; text-decoration: none; font-size: 0.875rem; }
+.acmebloc-header-shelves { display: flex; align-items: center; gap: 0.75rem; margin-left: 210px; }
+.acmebloc-header-shelves a { display: inline-flex; align-items: center; gap: 0; margin-right: 15px; color: #4f46e5; text-decoration: none; font-size: 0.875rem; }
 .acmebloc-header-shelves a:hover { text-decoration: underline; }
 #header-search-box-input {
   background: #fff !important; border: 1px solid #d1d5db !important; color: #111827 !important;
@@ -772,8 +773,50 @@ sudo -u bookstack bash -c "cd $BS && php artisan view:clear"
 > 작성했지만, 실제로는 서버의 원본을 그대로 복사해서 패치하므로 버전 차이는 문제 없다.
 > 다만 정규식 앵커(`userCanOnAny` ~ `books_view`)가 실제 원본과 다르면 안전하게
 > abort하도록 만들어뒀다 — "block not found" 에러가 나면 그 파일을
-> `cat`해서 보여줄 것. `.acmebloc-header-shelves`의 `margin-left: 96px`도 여전히
-> 어림값이라 화면 보고 조정이 필요할 수 있다.
+> `cat`해서 보여줄 것. `.acmebloc-header-shelves`의 `margin-left`는 사용자가 실제
+> 화면을 보고 210px로 확정(2026-08-28); `a` 링크의 `gap: 0` + `margin-right: 15px`도
+> 같은 라운드에 확정된 값이다.
+
+---
+
+## 13. 파비콘을 Manager와 통일
+
+Manager는 `/favicon.svg`를 쓰는데(`index.html`), 게시판은 BookStack 기본 파비콘을
+그대로 쓰고 있었다. `layouts/base.blade.php`(루트 레이아웃)는 위 표의 ※ 주의사항대로
+일부러 테마에 두지 않기로 했으므로, 거기 있는 파비콘 `<link>` 태그를 직접 고치는
+대신 커스텀 head에 우리 파비콘 `<link>`를 추가로 얹는다(10·12번과 같은 채널).
+
+```bash
+sudo tee /tmp/acmebloc-favicon.php > /dev/null <<'EOF'
+<?php
+require '/var/www/bookstack/app/vendor/autoload.php';
+$app = require '/var/www/bookstack/app/bootstrap/app.php';
+$app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+
+$svc = app(\BookStack\Settings\SettingService::class);
+
+$marker = 'ACMEBLOC-FAVICON';
+$head = (string) $svc->get('app-custom-head', '');
+if (str_contains($head, $marker)) {
+    echo "favicon: already set, skipping\n";
+} else {
+    $link = "\n<!-- {$marker} -->\n"
+          . "<link rel=\"icon\" type=\"image/svg+xml\" href=\"https://manager.acmebloc.com/favicon.svg\">\n";
+    $svc->put('app-custom-head', $head . $link);
+    echo "favicon: appended\n";
+}
+EOF
+
+sudo -u bookstack php /tmp/acmebloc-favicon.php
+sudo rm /tmp/acmebloc-favicon.php
+sudo -u bookstack bash -c 'cd /var/www/bookstack/app && php artisan config:clear'
+```
+
+> **확인 필요** — `layouts/base.blade.php`에 BookStack 자체 파비콘 `<link>`가 이미
+> 있을 텐데, 커스텀 head는 그 뒤에 추가되는 것이라 대부분 브라우저는 나중 선언을
+> 우선하지만 100% 보장은 아니다. 적용 후에도 탭 아이콘이 안 바뀌면, BookStack
+> 자체 파비콘의 실제 정적 파일 경로(`public/favicon.ico` 등)를 Manager 파비콘으로
+> 교체하는 방식으로 다시 시도한다.
 
 ---
 
@@ -844,7 +887,7 @@ sudo grep -E "^\s*'(shelf|book|chapter|page)'\s*=>" $BS/lang/ko/entities.php 2>/
   || sudo grep -E "^\s*'(shelf|book|chapter|page)'\s*=>" $BS/resources/lang/ko/entities.php 2>/dev/null
 echo
 echo "=== 게시판 서브메뉴 마커 (1 이상이어야 정상) ==="
-sudo grep -c "MANAGER-NAV-V7" $BS/themes/acmebloc/layouts/parts/header.blade.php
+sudo grep -c "MANAGER-NAV-V8" $BS/themes/acmebloc/layouts/parts/header.blade.php
 echo
 echo "=== 로고 삭제(header.blade.php가 shelves 파샬을 쓰는지, 1이어야 정상) ==="
 sudo grep -c "header-links-shelves" $BS/themes/acmebloc/layouts/parts/header.blade.php
