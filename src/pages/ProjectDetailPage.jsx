@@ -96,6 +96,7 @@ function ProjectDetailPage() {
 
   const isPm = project?.myRole === 'pm'
   const isPmOrPl = project?.myRole === 'pm' || project?.myRole === 'pl'
+  const dateProblem = startAt && endAt && startAt > endAt ? '시작일은 종료일보다 늦을 수 없습니다' : ''
 
   const startEditing = () => {
     setName(project.name)
@@ -107,6 +108,7 @@ function ProjectDetailPage() {
 
   const save = async (event) => {
     event.preventDefault()
+    if (dateProblem) return
     try {
       const updated = await apiFetch(`/api/projects/${id}`, {
         method: 'PATCH',
@@ -254,10 +256,11 @@ function ProjectDetailPage() {
               />
             </label>
           </div>
+          {dateProblem && <p className="text-sm text-red-600 dark:text-red-400">{dateProblem}</p>}
           <div className="flex gap-2">
             <button
               type="submit"
-              disabled={!name.trim()}
+              disabled={!name.trim() || Boolean(dateProblem)}
               className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
             >
               저장

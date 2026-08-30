@@ -17,6 +17,7 @@ function ProjectFormPage() {
   const [error, setError] = useState('')
 
   const hasPm = members.some((m) => m.role === 'pm')
+  const dateProblem = startAt && endAt && startAt > endAt ? '시작일은 종료일보다 늦을 수 없습니다' : ''
 
   // Added at the 'other' tier by default; the exact role (PM/PL/기획/디자인/
   // 개발/기타) is picked afterward from the row's own dropdown.
@@ -28,7 +29,7 @@ function ProjectFormPage() {
   const submit = async (event) => {
     event.preventDefault()
     const trimmed = name.trim()
-    if (!trimmed || !hasPm) return
+    if (!trimmed || !hasPm || dateProblem) return
     setSaving(true)
     try {
       const project = await apiFetch('/api/projects', {
@@ -133,11 +134,13 @@ function ProjectFormPage() {
           )}
         </div>
 
-        {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+        {(error || dateProblem) && (
+          <p className="text-sm text-red-600 dark:text-red-400">{error || dateProblem}</p>
+        )}
         <div className="flex gap-2">
           <button
             type="submit"
-            disabled={saving || !name.trim() || !hasPm}
+            disabled={saving || !name.trim() || !hasPm || Boolean(dateProblem)}
             className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
           >
             {saving ? '만드는 중...' : '만들기'}
