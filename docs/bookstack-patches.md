@@ -30,6 +30,7 @@
 | 11 | `themes/acmebloc/layouts/parts/header.blade.php` (5번 갱신) | Manager 메뉴 라벨 동기화 (일감/일정) | 유지 (※ 아래 주의) |
 | 12 | `themes/acmebloc/layouts/parts/header-links(-shelves).blade.php`, `header.blade.php` | 로고 삭제 + 공간/문서함 실제 이동 | 유지 (※ 아래 주의) |
 | 13 | 설정 DB (커스텀 head) | 파비콘을 Manager와 통일 | 유지 |
+| 14 | Apache vhost | Authorization 헤더를 PHP로 전달 (API 토큰 인증 선행조건) | 유지 |
 
 > **※ 뷰 오버라이드 주의** — 5·6번은 삭제되지는 않지만 **낡을 수 있다.** 테마의 복사본이
 > 원본을 완전히 대체하므로, 업그레이드로 원본에 새 마크업이 추가돼도 우리 복사본은 옛날
@@ -817,6 +818,73 @@ sudo -u bookstack bash -c 'cd /var/www/bookstack/app && php artisan config:clear
 > 우선하지만 100% 보장은 아니다. 적용 후에도 탭 아이콘이 안 바뀌면, BookStack
 > 자체 파비콘의 실제 정적 파일 경로(`public/favicon.ico` 등)를 Manager 파비콘으로
 > 교체하는 방식으로 다시 시도한다.
+
+---
+
+## 14. Authorization 헤더를 PHP로 전달 (API 토큰 인증 선행조건)
+
+BookStack API를 토큰으로 호출하는 기능(Manager 저장소의 `server/src/lib/bookstack.js`,
+프로젝트별 공간 자동 연동)을 처음 붙여보고 나서 발견함: 토큰 값 자체는 맞는데도
+매번 `요청에서 인증 토큰을 찾을 수 없습니다`(`errors.api_no_authorization_found`)
+에러가 났다. BookStack의 기본 `public/.htaccess`에는 Apache가 기본적으로 CGI/
+PHP에 넘겨주지 않는 `Authorization` 헤더를 강제로 넘겨주는 규칙이 있는데:
+
+```apache
+RewriteCond %{HTTP:Authorization} .
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+```
+
+8번에서 보듯 `<Directory "/var/www/bookstack/app/public">`는 `AllowOverride None`이라
+`.htaccess`를 아예 안 읽고, 그 자리를 대신하는 vhost의 수동 rewrite 규칙에는 이
+줄만 빠져 있었다(트레일링 슬래시 리다이렉트·index.php 라우팅 규칙만 옮겨져 있었음).
+API 인증을 쓰는 기능이 이번이 처음이라 지금까지 안 드러났던 것.
+
+```bash
+VHOST=/etc/apache2/sites-available/manager.acmebloc.com-le-ssl.conf
+
+sudo python3 - "$VHOST" <<'PYEOF'
+import sys
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+
+marker = "Handle Authorization Header"
+if marker in content:
+    print("already patched, skipping")
+    raise SystemExit(0)
+
+anchor = '''    <Directory "/var/www/bookstack/app/public">
+      Options FollowSymlinks
+      AllowOverride None
+      Require all granted
+
+      RewriteEngine On
+'''
+if anchor not in content:
+    raise SystemExit("BookStack <Directory> block not found in expected form — aborting")
+
+insertion = '''
+      # Handle Authorization Header — Apache strips this by default; without
+      # it BookStack's API token auth always fails with "no authorization
+      # found" even when the token itself is correct. Mirrors BookStack's own
+      # public/.htaccess, which AllowOverride None means we can't just rely on.
+      RewriteCond %{HTTP:Authorization} .
+      RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+'''
+
+content = content.replace(anchor, anchor + insertion, 1)
+with open(path, 'w') as f:
+    f.write(content)
+print("patched")
+PYEOF
+
+sudo apache2ctl configtest
+sudo systemctl reload apache2
+```
+
+> **참고** — 이 vhost 파일은 BookStack 저장소(`git pull`)와 무관한 Apache 자체 설정이라
+> BookStack 업그레이드로 되돌아가지 않는다. 서버를 처음부터 다시 만드는 경우에만
+> 이 단계를 잊지 말 것.
 
 ---
 
