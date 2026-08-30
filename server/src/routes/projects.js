@@ -3,7 +3,7 @@ import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
 import { assertNotLastPm, isValidRole, normalizeRole, requireProjectRole } from '../lib/projectAccess.js'
 import { deleteAttachmentFiles } from '../lib/uploads.js'
-import { provisionProjectSpace, retryProjectSpace, syncMemberRole } from '../lib/bookstack.js'
+import { deleteProjectSpace, provisionProjectSpace, retryProjectSpace, syncMemberRole } from '../lib/bookstack.js'
 
 const router = Router()
 
@@ -150,6 +150,14 @@ router.delete('/:id', requireProjectRole('pm'), async (req, res) => {
     select: { storageKey: true },
   })
   await deleteAttachmentFiles(attachments.map((a) => a.storageKey))
+
+  // BookStack 공간/문서함/역할도 정리 — 삭제 후엔 프로젝트 행이 없어져 재시도할
+  // 대상이 없으므로 fire-and-forget이 아니라 await한다(실패해도 삭제는 진행됨).
+  const project = await prisma.project.findUnique({
+    where: { id: req.params.id },
+    select: { bookstackShelfId: true, bookstackBookIds: true, bookstackRoleId: true },
+  })
+  if (project) await deleteProjectSpace(project)
 
   await prisma.project.delete({ where: { id: req.params.id } })
   res.status(204).end()

@@ -160,6 +160,37 @@ export async function syncMemberRole(projectId, userId, action, opts = {}) {
   }
 }
 
+// 프로젝트 삭제 라우트에서 프로젝트 삭제 전에 await로 호출 — fire-and-forget이
+// 아니다. 삭제 후엔 Project 행 자체가 사라져서 재시도할 대상이 없어지므로, 지금
+// 이 순간 최선을 다해 정리한다. 그래도 실패해도 프로젝트 삭제 자체는 막지
+// 않는다(호출부가 항상 이 함수를 무시하고 진행해도 되는 이유 — 여기서 이미
+// 모든 실패를 삼킨다). 셋 다 독립적인 자원이라 하나가 실패해도 나머지는 계속
+// 시도한다 — BookStack에 고아 자원이 남으면 관리자가 수동으로 정리해야 한다.
+export async function deleteProjectSpace(project) {
+  if (!bookstackConfigured()) return
+  for (const bookId of project.bookstackBookIds || []) {
+    await bookstackRequest('DELETE', `/books/${bookId}`).catch((err) =>
+      console.error('[bookstack] delete book failed', { bookId, error: err.message }),
+    )
+  }
+  if (project.bookstackShelfId) {
+    await bookstackRequest('DELETE', `/shelves/${project.bookstackShelfId}`).catch((err) =>
+      console.error('[bookstack] delete shelf failed', {
+        shelfId: project.bookstackShelfId,
+        error: err.message,
+      }),
+    )
+  }
+  if (project.bookstackRoleId) {
+    await bookstackRequest('DELETE', `/roles/${project.bookstackRoleId}`).catch((err) =>
+      console.error('[bookstack] delete role failed', {
+        roleId: project.bookstackRoleId,
+        error: err.message,
+      }),
+    )
+  }
+}
+
 // PM이 누르는 "게시판 연동 재시도" 버튼에서 호출 — 이번엔 await해서 결과를 바로
 // 응답에 반영한다. 아직 공간이 없으면 처음부터 프로비저닝, 이미 있으면 현재 멤버
 // 전원의 역할 부여만 다시 맞춘다(중간에 BookStack 로그인 안 한 멤버가 이제 계정이
