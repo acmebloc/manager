@@ -89,6 +89,7 @@ function ProjectFormPage() {
             />
           </label>
         </div>
+        {dateProblem && <p className="text-sm text-red-600 dark:text-red-400">{dateProblem}</p>}
 
         <div className="rounded-md border border-gray-200 p-3 dark:border-gray-700">
           <p className="mb-2 text-xs font-medium text-gray-700 dark:text-gray-300">
@@ -134,9 +135,7 @@ function ProjectFormPage() {
           )}
         </div>
 
-        {(error || dateProblem) && (
-          <p className="text-sm text-red-600 dark:text-red-400">{error || dateProblem}</p>
-        )}
+        {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
         <div className="flex gap-2">
           <button
             type="submit"
