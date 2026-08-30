@@ -442,12 +442,33 @@ BookStack의 4단 구조(Shelf > Book > Chapter > Page) 자체는 그대로 두�
 필수로 연결되지 않는 것(섹션 없이 문서함에 문서를 바로 넣을 수 있는 것)은 BookStack
 기본 동작 그대로 유지한다 — 구조 변경 없음, 표시 문구만 변경.
 
+**전면 재정리(2026-08-30).** 처음엔 WebFetch로 `entities.php`를 가져왔는데, 이게
+AI 요약이라 "관련된 키만" 35개 정도만 추출해서 실제로는 훨씬 많은 곳(사이드바 빠른
+동작 버튼, 정보 패널의 "N 권한 적용됨" 표시, 태그, 정렬/이동, 변환, 알림 설정 등)에
+책꽂이/책/챕터/페이지가 그대로 남아있었다 — 화면을 계속 쓰다가 사용자가 하나씩
+발견해서 알려줌. 이번엔 `gh api`로 파일 전체(480줄)를 원본 그대로 받아서 **150개
+키 전부**를 정리했다. 그 과정에서 두 가지를 더 발견:
+- BookStack 한국어 번역은 "책꽂이"뿐 아니라 "서가"/"책장"도 같은 뜻(Shelf)으로
+  섞어 쓰고, "챕터" 대신 "장"이라고만 쓴 곳도 있다(`chapters_new` 등) — 전부
+  공간/섹션으로 통일.
+- 명사를 바꾸면 뒤따르는 조사(이/가, 을/를, 은/는, 과/와, 으로/로, 나/이나)가 안
+  맞게 되는 경우가 있다(책꽂이→공간, 챕터→섹션은 받침 유무가 바뀌어서 조사가
+  깨짐 — 책→문서함, 페이지→문서는 받침 유무가 같아서 문제없음). 값 문자열을 통째로
+  바꿔서 해결했다.
+- `chapters_permissions_active`는 BookStack 원본 자체가 "문서 권한 허용함"이라고
+  잘못 번역돼 있던 걸(챕터 섹션인데 페이지 권한 문구가 붙어있음) 새 용어 체계에서
+  더 헷갈리길래 같이 고쳤다.
+
 번역 파일 위치는 BookStack 버전에 따라 `lang/ko/entities.php`(최신, Laravel 9+ 구조)
 또는 `resources/lang/ko/entities.php`(구버전) 중 하나다. 아래 스크립트가 둘 다 찾아본다.
 
-**값 문자열이 아니라 키 이름으로 치환**하므로, 지금 값이 정상(챕터)이든 화면에 보이는
-알려진 오역(새창)이든 상관없이 안전하게 덮어쓴다. 각 키를 찾았는지 결과로 출력하니,
-"NOT FOUND"로 나온 키가 있으면 그 부분만 캡처해서 알려줄 것 — 다음 라운드에서 마저 고친다.
+**값 문자열이 아니라 키 이름으로 치환**하므로, 지금 값이 이전 라운드에서 이미 고쳐진
+상태든 원본 그대로든 상관없이 항상 최종 정답으로 덮어쓴다(재실행해도 안전). 각 키를
+찾았는지 결과로 출력하니, "NOT FOUND"로 나온 키가 있으면 그 부분만 캡처해서 알려줄 것.
+
+로컬에서 이 스크립트를 실제로 두 가지 상태(원본 그대로 / 예전 35개만 고쳐진 상태)에
+돌려보고 최종 결과가 완전히 같은 것까지 확인했고, 문법 오류(작은따옴표가 값 안에
+그대로 들어있는 `shelves_delete_explain` 등)도 잡아서 고쳤다.
 
 ```bash
 BS=/var/www/bookstack/app
@@ -467,55 +488,173 @@ with open(path) as f:
     content = f.read()
 
 MAPPING = {
-    'shelf': '공간',
-    'shelves': '공간',
-    'x_shelves': '공간 :count개|총 :count개',
-    'shelves_empty': '만든 공간이 없습니다.',
-    'shelves_create': '공간 만들기',
-    'shelves_popular': '많이 읽은 공간',
-    'shelves_new': '새로운 공간',
-    'shelves_books': '이 공간에 있는 문서함들',
-    'shelves_add_books': '이 공간에 문서함 추가',
-    'shelves_edit_named': '공간 편집 :name',
-    'shelves_delete': '공간 삭제',
-    'shelves_permissions': '공간 권한',
-    'book': '문서함',
-    'books': '문서함',
-    'x_books': '문서함 :count개|총 :count개',
-    'books_empty': '만든 문서함이 없습니다.',
-    'books_popular': '많이 읽은 문서함',
-    'books_create': '문서함 만들기',
-    'books_delete': '문서함 삭제하기',
-    'books_edit': '문서함 바꾸기',
-    'books_permissions': '문서함 권한',
-    'books_sort': '문서함 내용 정렬',
-    'chapter': '섹션',
-    'chapters': '섹션',
-    'x_chapters': '섹션 :count개|총 :count개',
-    'chapters_create': '섹션 만들기',
-    'chapters_delete': '섹션 삭제하기',
-    'chapters_edit': '섹션 수정하기',
-    'chapters_permissions': '섹션 권한',
-    'page': '문서',
-    'pages': '문서',
-    'x_pages': '문서 :count개|총 :count개',
-    'pages_delete': '문서 삭제하기',
-    'pages_permissions': '문서 권한',
+    'recently_created_chapters': "'최근에 만든 섹션'",
+    'recently_created_books': "'최근에 만든 문서함'",
+    'recently_created_shelves': "'최근에 만든 공간'",
+    'no_pages_viewed': "'본 문서가 없습니다.'",
+    'no_pages_recently_created': "'최근에 생성된 문서가 없습니다.'",
+    'no_pages_recently_updated': "'최근 업데이트된 문서가 없습니다.'",
+    'default_template': "'기본 문서 템플릿'",
+    'default_template_explain': "'이 항목 내에서 생성되는 모든 문서의 기본 콘텐츠로 사용할 문서 템플릿을 지정합니다. 문서 작성자가 선택한 템플릿 문서를 볼 수 있는 권한이 있는 경우에만 이 항목이 사용된다는 점을 유의하세요.'",
+    'default_template_select': "'템플릿 문서 선택'",
+    'import_desc': "'같은 인스턴스나 다른 인스턴스에서 휴대용 zip 내보내기를 사용하여 문서함, 섹션 및 문서를 가져옵니다. 진행하려면 ZIP 파일을 선택합니다. 파일을 업로드하고 검증한 후 다음 보기에서 가져오기를 구성하고 확인할 수 있습니다.'",
+    'permissions_book_cascade': "'문서함에 설정된 권한은 자체 권한이 정의되어 있지 않은 한 하위 섹션과 문서에 자동으로 계단식으로 적용됩니다.'",
+    'permissions_chapter_cascade': "'섹션에 설정된 권한은 하위 문서에 자체 권한이 정의되어 있지 않는 한 자동으로 계단식으로 적용됩니다.'",
+    'shelf': "'공간'",
+    'shelves': "'공간'",
+    'x_shelves': "'공간 :count개|총 :count개'",
+    'shelves_empty': "'만든 공간이 없습니다.'",
+    'shelves_create': "'공간 만들기'",
+    'shelves_popular': "'많이 읽은 공간'",
+    'shelves_new': "'새로운 공간'",
+    'shelves_new_action': "'새 공간'",
+    'shelves_popular_empty': "'많이 읽은 공간 목록'",
+    'shelves_new_empty': "'새로운 공간 목록'",
+    'shelves_books': "'이 공간에 있는 문서함들'",
+    'shelves_add_books': "'이 공간에 문서함 추가'",
+    'shelves_drag_books': "'문서함을 이 공간에 추가하려면 아래로 드래그하세요'",
+    'shelves_empty_contents': "'이 공간에 문서함이 없습니다.'",
+    'shelves_edit_and_assign': "'공간 바꾸기로 문서함을 추가하세요.'",
+    'shelves_edit_named': "'공간 편집 :name'",
+    'shelves_edit': "'공간 편집'",
+    'shelves_delete': "'공간 삭제'",
+    'shelves_delete_named': "'공간 삭제 :이름'",
+    'shelves_delete_explain': '"그러면 \':name\'이라는 이름의 공간이 삭제됩니다. 포함된 문서함은 삭제되지 않습니다."',
+    'shelves_delete_confirmation': "'이 공간을 삭제하시겠습니까?'",
+    'shelves_permissions': "'공간 권한'",
+    'shelves_permissions_updated': "'공간 권한 업데이트됨'",
+    'shelves_permissions_active': "'공간 권한 활성화'",
+    'shelves_permissions_cascade_warning': "'공간에 대한 권한은 포함된 문서함에 자동으로 계단식으로 부여되지 않습니다. 한 권의 문서함이 여러 개의 공간에 존재할 수 있기 때문입니다. 그러나 아래 옵션을 사용하여 권한을 하위 문서함으로 복사할 수 있습니다.'",
+    'shelves_permissions_create': "'공간 만들기 권한은 아래 작업을 사용하여 하위 문서함에 대한 권한을 복사하는 데만 사용됩니다. 문서함을 만드는 기능은 제어하지 않습니다.'",
+    'shelves_copy_permissions_explain': "'그러면 이 공간의 현재 권한 설정이 이 공간에 포함된 모든 문서함에 적용됩니다. 활성화하기 전에 이 공간의 권한에 대한 변경 사항이 모두 저장되었는지 확인하세요.'",
+    'shelves_copy_permission_success': "'공간 권한이 복사됨 :count books'",
+    'book': "'문서함'",
+    'books': "'문서함'",
+    'x_books': "'문서함 :count개|총 :count개'",
+    'books_empty': "'만든 문서함이 없습니다.'",
+    'books_popular': "'많이 읽은 문서함'",
+    'books_recent': "'최근에 읽은 문서함'",
+    'books_new': "'새로운 문서함'",
+    'books_new_action': "'새 문서함'",
+    'books_popular_empty': "'많이 읽은 문서함 목록'",
+    'books_new_empty': "'새로운 문서함 목록'",
+    'books_create': "'문서함 만들기'",
+    'books_delete': "'문서함 삭제하기'",
+    'books_delete_explain': "':bookName에 있는 모든 섹션과 문서도 지웁니다.'",
+    'books_delete_confirmation': "'이 문서함을 지우시겠습니까?'",
+    'books_edit': "'문서함 바꾸기'",
+    'books_form_book_name': "'문서함 이름'",
+    'books_permissions': "'문서함 권한'",
+    'books_permissions_updated': "'문서함의 권한이 수정되었습니다.'",
+    'books_empty_contents': "'이 문서함에 섹션이나 문서가 없습니다.'",
+    'books_empty_sort_current_book': "'현재 문서함 정렬'",
+    'books_empty_add_chapter': "'섹션 만들기'",
+    'books_permissions_active': "'문서함 권한 적용됨'",
+    'books_search_this': "'이 문서함에서 검색'",
+    'books_sort': "'문서함 내용 정렬'",
+    'books_sort_desc': "'문서함 내의 섹션과 문서를 이동하여 콘텐츠를 재구성할 수 있습니다. 다른 문서함들을 추가하여 문서함 간의 섹션과 문서를 쉽게 이동할 수 있습니다. 선택적으로 자동 정렬 규칙을 설정하여 변경 시 이 문서함의 콘텐츠를 자동으로 정렬할 수 있습니다.'",
+    'books_sort_chapters_first': "'섹션 우선'",
+    'books_sort_show_other': "'다른 문서함들'",
+    'books_sort_show_other_desc': "'여기에 다른 문서함을 추가하여 정렬 작업에 포함시키고 문서함 간 재구성을 쉽게 할 수 있습니다.'",
+    'books_sort_move_prev_book': "'이전 문서함으로 이동'",
+    'books_sort_move_next_book': "'다음 문서함으로 이동'",
+    'books_sort_move_prev_chapter': "'이전 섹션으로 이동'",
+    'books_sort_move_next_chapter': "'다음 섹션으로 이동'",
+    'books_sort_move_book_start': "'문서함 시작 부분으로 이동'",
+    'books_sort_move_book_end': "'문서함의 끝으로 이동'",
+    'books_sort_move_before_chapter': "'이전 섹션으로 이동'",
+    'books_sort_move_after_chapter': "'섹션 뒤로 이동'",
+    'books_copy': "'문서함 복사하기'",
+    'books_copy_success': "'문서함을 복사하였습니다.'",
+    'chapter': "'섹션'",
+    'chapters': "'섹션'",
+    'x_chapters': "'섹션 :count개|총 :count개'",
+    'chapters_popular': "'많이 읽은 섹션'",
+    'chapters_new': "'새 섹션'",
+    'chapters_create': "'섹션 만들기'",
+    'chapters_delete': "'섹션 삭제하기'",
+    'chapters_delete_explain': "'\\':ChapterName\\'에 있는 모든 문서도 지웁니다.'",
+    'chapters_delete_confirm': "'이 섹션을 지울 건가요?'",
+    'chapters_edit': "'섹션 수정하기'",
+    'chapters_move': "'섹션 이동하기'",
+    'chapters_copy': "'섹션 복사하기'",
+    'chapters_copy_success': "'섹션을 복사하였습니다.'",
+    'chapters_permissions': "'섹션 권한'",
+    'chapters_empty': "'이 섹션에 문서가 없습니다.'",
+    'chapters_permissions_active': "'섹션 권한 적용됨'",
+    'chapters_permissions_success': "'섹션의 권한을 수정하였습니다.'",
+    'chapters_search_this': "'이 섹션에서 검색'",
+    'chapter_sort_book': "'문서함 정렬하기'",
+    'page': "'문서'",
+    'pages': "'문서'",
+    'pages_new': "'새 문서'",
+    'pages_delete_warning_template': "'이 문서는 문서함의 기본 문서 템플릿으로 사용 중입니다. 이 문서가 삭제되면 해당하는 문서함에 더 이상 기본 문서 템플릿이 적용되지 않습니다.'",
+    'pages_edit_delete_draft_confirm': "'초안 문서 변경 내용을 삭제하시겠습니까? 마지막 전체 저장 이후의 모든 변경 내용이 손실되고 편집기가 최신 문서의 초안 저장 상태가 아닌 상태로 업데이트됩니다.'",
+    'pages_editor_switch_are_you_sure': "'이 문서의 편집기를 변경하시겠어요?'",
+    'pages_not_in_chapter': "'섹션에 있는 문서가 아닙니다.'",
+    'pages_revisions_desc': "'아래는 이 문서의 모든 과거 개정 버전입니다. 권한이 허용하는 경우 이전 문서 버전을 되돌아보고, 비교하고, 복원할 수 있습니다. 시스템 구성에 따라 이전 수정본이 자동으로 삭제될 수 있으므로 문서의 전체 기록이 여기에 완전히 반영되지 않을 수 있습니다.'",
+    'pages_pointer_label': "'문서 섹션 옵션'",
+    'pages_pointer_permalink': "'문서 섹션 퍼머링크'",
+    'pages_pointer_include_tag': "'문서 섹션 포함 태그 포함'",
+    'pages_draft_discarded': "'초안 폐기! 편집기가 현재 문서 콘텐츠로 업데이트되었습니다.'",
+    'pages_draft_deleted': "'초안이 삭제되었습니다! 편집기가 현재 문서 콘텐츠로 업데이트되었습니다.'",
+    'page_tags': "'문서 태그'",
+    'chapter_tags': "'섹션 태그'",
+    'book_tags': "'문서함 태그'",
+    'shelf_tags': "'공간 태그'",
+    'tags_assigned_pages': "'| 문서 태그 할당 |'",
+    'tags_assigned_chapters': "'| 섹션 태그 할당 |'",
+    'tags_assigned_books': "'| 문서함 태그 할당 |'",
+    'tags_assigned_shelves': "'| 공간 태그 할당 |'",
+    'tags_list_empty_hint': "'태그는 에디터 사이드바나 문서함, 섹션 또는 공간 정보 편집에서 지정할 수 있습니다.'",
+    'attachments_insert_link': "'문서에 첨부파일 링크 추가'",
+    'templates_set_as_template': "'현재 문서는 템플릿용 문서 입니다.'",
+    'profile_not_created_chapters': "':userName(이)가 만든 섹션 없음'",
+    'profile_not_created_books': "':userName(이)가 만든 문서함 없음'",
+    'profile_not_created_shelves': "':userName(이)가 만든 공간 없음'",
+    'comment_editor_explain': "'이 문서에 남겨진 댓글은 다음과 같습니다. 저장된 문서를 볼 때 댓글을 추가하고 관리할 수 있습니다.'",
+    'revision_restore_confirm': "'이 버전을 되돌릴 건가요? 현재 문서는 대체됩니다.'",
+    'convert_to_shelf': "'공간으로 변환'",
+    'convert_to_shelf_contents_desc': "'이 문서함을 동일한 내용의 새 공간으로 변환할 수 있습니다. 이 문서함에 포함된 섹션은 새 문서함으로 변환됩니다. 이 문서함에 섹션에 포함되지 않은 문서가 포함되어 있는 경우, 이 문서함의 이름이 변경되어 해당 문서가 포함되며 이 문서함은 새 공간의 일부가 됩니다.'",
+    'convert_to_shelf_permissions_desc': "'이 문서함에 설정된 모든 권한은 새 공간 및 자체 권한이 적용되지 않은 모든 새 문서함에 복사됩니다. 문서함에 대한 권한은 문서함에 대한 권한처럼 그 안의 콘텐츠로 자동 캐스케이드되지 않는다는 점에 유의하세요.'",
+    'convert_book': "'문서함 변환'",
+    'convert_book_confirm': "'이 문서함을 변환하시겠어요?'",
+    'convert_to_book': "'문서함으로 변환'",
+    'convert_to_book_desc': "'이 섹션을 동일한 내용의 새 문서함으로 변환할 수 있습니다. 이 섹션에 설정된 모든 권한은 새 문서함에 복사되지만 상위 문서함에서 상속된 권한은 복사되지 않으므로 액세스 제어가 변경될 수 있습니다.'",
+    'convert_chapter': "'섹션 변환'",
+    'convert_chapter_confirm': "'이 섹션을 변환하시겠어요?'",
+    'watch_title_new': "'새로운 문서'",
+    'watch_desc_new': "'이 항목에 새 문서가 생성되면 알림을 받습니다.'",
+    'watch_title_updates': "'전체 문서 업데이트'",
+    'watch_desc_updates': "'모든 새 문서와 문서 변경 시 알림을 보냅니다.'",
+    'watch_desc_updates_page': "'모든 문서 변경 시 알림을 보냅니다.'",
+    'watch_title_comments': "'모든 문서 업데이트 및 댓글'",
+    'watch_desc_comments': "'모든 새 문서, 문서 변경 및 새 댓글에 대해 알림을 보냅니다.'",
+    'watch_desc_comments_page': "'문서 변경 및 새 댓글이 있을 때 알림을 보냅니다.'",
+    'watch_detail_new': "'새 문서 보기'",
+    'watch_detail_updates': "'새 문서 및 업데이트 보기'",
+    'watch_detail_comments': "'새 문서, 업데이트 및 댓글 보기'",
+    'watch_detail_parent_book': "'상위 문서함을 통해 보기'",
+    'watch_detail_parent_book_ignore': "'상위 문서함을 통한 무시하기'",
+    'watch_detail_parent_chapter': "'상위 섹션을 통해 보기'",
+    'watch_detail_parent_chapter_ignore': "'상위 섹션을 통해 무시하기'",
 }
 
 found, missing = [], []
-for key, value in MAPPING.items():
-    pattern = re.compile(r"(['\"])" + re.escape(key) + r"\1\s*=>\s*(['\"]).*?\2\s*,")
-    replacement = f"'{key}' => '{value}',"
+for key, value_literal in MAPPING.items():
+    pattern = re.compile(
+        r"(['\"])" + re.escape(key) + r"\1\s*=>\s*(?:'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\")\s*,"
+    )
+    replacement = f"'{key}' => {value_literal},"
     content, count = pattern.subn(replacement, content, count=1)
     (found if count else missing).append(key)
 
 with open(path, 'w') as f:
     f.write(content)
 
-print(f"치환됨 ({len(found)}): {', '.join(found)}")
+print(f"치환됨 ({len(found)}/{len(MAPPING)})")
 if missing:
-    print(f"NOT FOUND ({len(missing)}) — 이 키들은 확인 필요: {', '.join(missing)}")
+    print(f"NOT FOUND ({len(missing)}) — 이 키들은 확인 필요: " + ', '.join(missing))
 PYEOF
 
 sudo -u bookstack bash -c "cd $BS && php artisan config:clear && php artisan view:clear"
@@ -527,10 +666,17 @@ sudo -u bookstack bash -c "cd $BS && php artisan config:clear && php artisan vie
 
 ## 10. 디자인 톤 통일 (색상·폰트) + 로고 숨김
 
-Manager의 톤(인디고 `#4f46e5` 포인트 컬러, 시스템 기본 폰트, 톤 다운된 그레이 배경)을
-게시판에도 입힌다. BookStack은 브랜드 컬러를 코어 수정 없이 설정으로 바꿀 수 있는
-`app-color`/`app-color-light` 값을 지원하므로(1번 카테고리, 제일 안전함) 이걸 우선
-쓰고, 폰트·로고만 커스텀 head CSS로 보완한다.
+Manager의 톤(인디고 `#4f46e5` 포인트 컬러, 시스템 기본 폰트, 흰 배경 + 진한 회색
+글자)을 게시판에도 입힌다. BookStack은 브랜드 컬러를 코어 수정 없이 설정으로 바꿀 수
+있는 `app-color`/`app-color-light` 값을 지원하므로(1번 카테고리, 제일 안전함) 이걸
+우선 쓰고, 폰트·배경·글자색·로고는 커스텀 head CSS로 보완한다.
+
+**2026-08-30 확장:** 처음엔 `body`에만 폰트를 걸어서 폼 요소(입력창/버튼/선택박스는
+브라우저 기본 폰트를 따로 쓰는 경우가 많음)에는 안 먹혔을 수 있다 — `!important` +
+대상 확장으로 강화하고, 배경·글자색도 명시적으로 맞췄다. 다만 버튼/카드/테이블처럼
+실제 마크업을 본 적 없는 요소는 여기서 억지로 셀렉터를 추측하지 않는다 — 헤더처럼
+실제 markup을 받아서 정확히 맞추는 편이 이전 세션에서 훨씬 안전했다(11·12번 시행착오
+참고).
 
 ```bash
 sudo tee /tmp/acmebloc-design.php > /dev/null <<'EOF'
@@ -544,14 +690,19 @@ $svc = app(\BookStack\Settings\SettingService::class);
 $svc->put('app-color', '#4f46e5');       // Tailwind indigo-600, Manager 포인트 컬러
 $svc->put('app-color-light', '#eef2ff'); // indigo-50, 옅은 배경/hover용
 
-$marker = 'ACMEBLOC-DESIGN-TONE';
+$marker = 'ACMEBLOC-DESIGN-TONE-V2';
 $head = (string) $svc->get('app-custom-head', '');
 if (str_contains($head, $marker)) {
     echo "design tone css: already set, skipping\n";
 } else {
     $css = "\n<!-- {$marker} -->\n<style>\n"
-         . "  /* Manager와 같은 시스템 기본 폰트로 통일 (Tailwind 기본 font-sans 스택) */\n"
-         . "  body { font-family: ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\"; }\n"
+         . "  /* Manager와 같은 시스템 기본 폰트로 통일 (Tailwind 기본 font-sans 스택) —\n"
+         . "     폼 요소는 브라우저 기본 폰트를 따로 쓰는 경우가 많아 명시적으로 포함 */\n"
+         . "  body, input, textarea, select, button {\n"
+         . "    font-family: ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\" !important;\n"
+         . "  }\n"
+         . "  /* 배경/글자색 — Manager의 흰 배경 + 진한 회색(gray-900) 글자 */\n"
+         . "  body { background: #ffffff !important; color: #111827 !important; }\n"
          . "  /* 로고 숨김 — Manager 메뉴바에 이미 브랜딩이 있어 중복 노출 안 함 */\n"
          . "  .logo, header .logo-image, a.logo { display: none !important; }\n"
          . "</style>\n";
@@ -568,7 +719,9 @@ sudo -u bookstack bash -c 'cd /var/www/bookstack/app && php artisan config:clear
 > **확인 필요** — `app-color`/`app-color-light` 설정 키 이름과 로고 셀렉터(`.logo` 등)는
 > BookStack 소스 기준으로 넣은 값이라, 실제 설치본과 미묘하게 다를 수 있다. 적용 후
 > 스크린샷으로 확인해서 색이 안 바뀌거나 로고가 안 사라지면 알려줄 것 — 실제 셀렉터·
-> 설정 키를 다시 맞춘다.
+> 설정 키를 다시 맞춘다. 버튼/카드/테이블 등 더 맞추고 싶은 요소가 있으면, 그 요소를
+> 브라우저에서 우클릭 → 검사 → outerHTML을 복사해서 알려줄 것 — 실제 class를 보고
+> 정확히 맞춘다(11번에서 헤더에 썼던 방식과 동일).
 
 ---
 
