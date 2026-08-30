@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
 import { assertNotLastPm, isValidRole, normalizeRole, requireProjectRole } from '../lib/projectAccess.js'
+import { assertDateOrder } from '../lib/taskFields.js'
 import { deleteAttachmentFiles } from '../lib/uploads.js'
 import { deleteProjectSpace, provisionProjectSpace, retryProjectSpace, syncMemberRole } from '../lib/bookstack.js'
 
@@ -51,6 +52,9 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
   const { name, description, startAt, endAt, members = [] } = req.body
   if (!name) return res.status(400).json({ error: 'name is required' })
+
+  const dateProblem = assertDateOrder(startAt, endAt)
+  if (dateProblem) return res.status(400).json({ error: dateProblem })
 
   if (!Array.isArray(members) || members.some((m) => !m?.userId || !isValidRole(m.role))) {
     return res.status(400).json({ error: 'members must be [{ userId, role }]' })
@@ -125,6 +129,16 @@ router.get('/:id', requireProjectRole('member'), async (req, res) => {
 
 router.patch('/:id', requireProjectRole('pm'), async (req, res) => {
   const { name, description, startAt, endAt } = req.body
+
+  // PATCH는 부분 수정이라, 이번 요청에서 안 건드리는 쪽은 req.projectAccess에
+  // 이미 실려있는 현재 값으로 채워서 순서를 검사한다(tasks.js PATCH와 동일한
+  // nextStartAt/nextEndAt 패턴) — 그래야 시작일만 바꿔서 기존 종료일보다
+  // 뒤로 넘기는 것도 걸러진다.
+  const nextStartAt = startAt !== undefined ? startAt : req.projectAccess.project.startAt
+  const nextEndAt = endAt !== undefined ? endAt : req.projectAccess.project.endAt
+  const dateProblem = assertDateOrder(nextStartAt, nextEndAt)
+  if (dateProblem) return res.status(400).json({ error: dateProblem })
+
   const project = await prisma.project.update({
     where: { id: req.params.id },
     data: {

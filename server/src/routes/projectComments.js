@@ -43,18 +43,35 @@ async function validMentionUserIds(projectId, mentionUserIds) {
 // 본인 멘션은 스킵. 프로젝트 이름은 알릴 대상이 있을 때만 조회한다.
 async function notifyNewMentions({ comment, projectId, actor, newUserIds }) {
   if (newUserIds.size === 0) return
-  const project = await prisma.project.findUnique({ where: { id: projectId }, select: { name: true } })
+  // 호출부가 이 함수를 await 없이 fire-and-forget으로 부르므로, 아래 DB
+  // 조회가 실패하면 여기서 삼키지 않는 한 unhandled rejection이 돼 프로세스
+  // 전체가 죽는다.
+  let project
+  try {
+    project = await prisma.project.findUnique({ where: { id: projectId }, select: { name: true } })
+  } catch (err) {
+    console.error('[notify] notifyNewMentions failed to load project', { projectId, error: err.message })
+    return
+  }
   const link = `/projects/${projectId}`
   for (const mention of comment.mentions) {
     if (!newUserIds.has(mention.user.id) || mention.user.id === actor.id) continue
-    if (!(await wantsEmailNotifications(mention.user.id))) continue
-    const recipient = decryptUser(mention.user)
-    notifyMention({
-      to: recipient.email,
-      actorName: actor.name,
-      contextLabel: `"${project.name}" 프로젝트 댓글`,
-      link,
-    })
+    try {
+      if (!(await wantsEmailNotifications(mention.user.id))) continue
+      const recipient = decryptUser(mention.user)
+      notifyMention({
+        to: recipient.email,
+        actorName: actor.name,
+        contextLabel: `"${project.name}" 프로젝트 댓글`,
+        link,
+      })
+    } catch (err) {
+      console.error('[notify] notifyNewMentions failed', {
+        commentId: comment.id,
+        userId: mention.user.id,
+        error: err.message,
+      })
+    }
   }
 }
 

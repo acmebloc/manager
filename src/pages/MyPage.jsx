@@ -114,8 +114,8 @@ function MyPage() {
       const file = event.target.files?.[0]
       event.target.value = ''
       if (!file) return
-      const dataUrl = await resizeImageFile(file)
       try {
+        const dataUrl = await resizeImageFile(file)
         const next = await updateProfile(session, { picture: dataUrl })
         await saveSession(next)
         setSession(next)

@@ -135,6 +135,8 @@ function TaskFormPage() {
   const mentionUsersById = useMemo(() => new Map(memberUsers.map((m) => [m.id, m])), [memberUsers])
   const assigneeOptions = useMemo(() => buildAssigneeOptions(memberUsers, task), [memberUsers, task])
 
+  const dateProblem = draft.startAt && draft.endAt && draft.startAt > draft.endAt ? '시작일은 종료일보다 늦을 수 없습니다' : ''
+
   const dateOutOfProjectRange = useMemo(() => {
     if (!project) return false
     const start = draft.startAt && project.startAt && draft.startAt < toDateInputValue(project.startAt)
@@ -167,10 +169,7 @@ function TaskFormPage() {
 
   const save = async (event) => {
     event.preventDefault()
-    if (draft.startAt && draft.endAt && draft.startAt > draft.endAt) {
-      setError('시작일은 종료일보다 늦을 수 없습니다')
-      return
-    }
+    if (dateProblem) return
     setSaving(true)
     try {
       const newLinks = {
@@ -372,6 +371,7 @@ function TaskFormPage() {
               </p>
             </div>
           </div>
+          {dateProblem && <p className="text-sm text-red-600 dark:text-red-400">{dateProblem}</p>}
           {dateOutOfProjectRange && (
             <p className="text-xs text-amber-600 dark:text-amber-400">
               프로젝트 기간을 벗어난 날짜예요. 저장은 막지 않지만 확인해 주세요.
@@ -398,7 +398,7 @@ function TaskFormPage() {
           <div className="flex gap-2">
             <button
               type="submit"
-              disabled={saving || !draft.title.trim()}
+              disabled={saving || !draft.title.trim() || Boolean(dateProblem)}
               className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
             >
               {saving ? '저장 중...' : isNew ? '만들기' : '저장'}

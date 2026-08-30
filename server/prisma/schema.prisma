@@ -66,6 +66,13 @@ model Project {
   bookstackRoleId    Int?
   bookstackSyncedAt  DateTime?
   bookstackSyncError String?
+  // 프로비저닝 진행 중 표시 — provisionProjectSpace가 시작할 때 찍고 끝나면
+  // 지운다. 이게 없으면 자동 생성이 아직 도는 중에 PM이 재시도 버튼을 눌러도
+  // bookstackShelfId가 그때까진 null이라 두 번째 프로비저닝이 그대로 겹쳐
+  // 돌면서 공간/문서함/역할이 중복 생성된다(check-then-act race). 오래
+  // 지나도(PROVISIONING_STALE_MS) 안 지워졌으면 이전 시도가 죽은 것으로 보고
+  // 다시 시도를 허용한다.
+  bookstackProvisioningStartedAt DateTime?
 }
 
 // Who can see and touch a project, and how much. A project must always keep

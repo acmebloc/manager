@@ -48,6 +48,7 @@ function goAfterLogin(navigate) {
 function LoginPage() {
   const [session, setSession] = useState(null)
   const [gsiReady, setGsiReady] = useState(false)
+  const [gsiError, setGsiError] = useState(false)
   const [signingIn, setSigningIn] = useState(false)
   const googleButtonRef = useRef(null)
   const fakeButtonRef = useRef(null)
@@ -83,8 +84,17 @@ function LoginPage() {
       const cached = await loadSession()
       if (!cancelled) setSession(cached)
 
-      const available = await initGoogleSignIn(handleCredential)
-      if (!cancelled) setGsiReady(available)
+      // waitForGis(googleAuth.js)는 10초 안에 GIS 스크립트가 안 뜨면(광고
+      // 차단기 등으로 accounts.google.com 자체가 막힌 경우) reject한다 — 여기서
+      // 안 잡으면 unhandled rejection으로 조용히 끝나고, gsiReady가 계속
+      // false인데도 화면은 멀쩡해 보이는 로그인 버튼을 그린다(눌러도 반응 없음).
+      try {
+        const available = await initGoogleSignIn(handleCredential)
+        if (!cancelled) setGsiReady(available)
+      } catch (err) {
+        console.error('Google Identity Services failed to load:', err)
+        if (!cancelled) setGsiError(true)
+      }
     })()
     return () => {
       cancelled = true
@@ -116,6 +126,13 @@ function LoginPage() {
           />
           <span>{session.profile.email}로 접속</span>
         </button>
+      ) : GOOGLE_CLIENT_ID && gsiError ? (
+        <div
+          title="Google 로그인을 불러오지 못했습니다. 광고 차단 확장 프로그램을 꺼거나 새로고침해 보세요."
+          className="flex h-10 cursor-not-allowed items-center whitespace-nowrap rounded-full border border-dashed border-gray-300 px-[10px] text-sm text-gray-400 dark:border-gray-600 dark:text-gray-500"
+        >
+          Gmail 로그인을 불러올 수 없어요
+        </div>
       ) : GOOGLE_CLIENT_ID ? (
         <div className="relative inline-flex">
           <button

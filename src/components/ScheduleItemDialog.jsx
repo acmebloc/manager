@@ -412,6 +412,7 @@ function ScheduleItemDialog({ projectId, item, members, onClose, onDone }) {
               )}
             </div>
           </div>
+          {dateProblem && <p className="text-sm text-red-600 dark:text-red-400">{dateProblem}</p>}
 
           {showRecurrenceCheckbox && (
             <div>
@@ -445,9 +446,7 @@ function ScheduleItemDialog({ projectId, item, members, onClose, onDone }) {
             )}
           </div>
 
-          {(error || dateProblem) && (
-            <p className="text-sm text-red-600 dark:text-red-400">{error || dateProblem}</p>
-          )}
+          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
         </div>
 
         <div className="mt-5 flex items-center justify-between">

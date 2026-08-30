@@ -63,14 +63,25 @@ async function notifyNewMentions({ comment, task, actor, newUserIds }) {
   const link = `/tasks/${task.projectId}/${task.id}`
   for (const mention of comment.mentions) {
     if (!newUserIds.has(mention.user.id) || mention.user.id === actor.id) continue
-    if (!(await wantsEmailNotifications(mention.user.id))) continue
-    const recipient = decryptUser(mention.user)
-    notifyMention({
-      to: recipient.email,
-      actorName: actor.name,
-      contextLabel: `"${task.title}" 일감 댓글`,
-      link,
-    })
+    // 호출부가 이 함수를 await 없이 fire-and-forget으로 부르므로, 멘션 한 명
+    // 처리 중 DB 조회가 실패해도 나머지 멘션 알림을 계속 시도하고 프로세스가
+    // 죽지 않도록 멘션별로 감싼다.
+    try {
+      if (!(await wantsEmailNotifications(mention.user.id))) continue
+      const recipient = decryptUser(mention.user)
+      notifyMention({
+        to: recipient.email,
+        actorName: actor.name,
+        contextLabel: `"${task.title}" 일감 댓글`,
+        link,
+      })
+    } catch (err) {
+      console.error('[notify] notifyNewMentions failed', {
+        commentId: comment.id,
+        userId: mention.user.id,
+        error: err.message,
+      })
+    }
   }
 }
 

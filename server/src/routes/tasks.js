@@ -137,13 +137,21 @@ async function assertAssigneeIsMember(projectId, assigneeId, previousAssigneeId)
 // skips on) — self-assignment doesn't need an email.
 async function notifyIfNewAssignee(task, actor, previousAssigneeId) {
   if (!task.assigneeId || task.assigneeId === previousAssigneeId || task.assigneeId === actor.id) return
-  if (!(await wantsEmailNotifications(task.assigneeId))) return
-  notifyAssigned({
-    to: decryptUser(task.assignee).email,
-    actorName: actor.name,
-    taskTitle: task.title,
-    link: `/tasks/${task.projectId}/${task.id}`,
-  })
+  // 호출부(POST/PATCH)가 이 함수를 await 없이 fire-and-forget으로 부르므로,
+  // wantsEmailNotifications의 DB 조회가 실패하면(일시적 커넥션 장애 등) 여기서
+  // 삼키지 않는 한 unhandled rejection이 돼 프로세스 전체가 죽는다
+  // (mailer.js의 sendMail은 이미 안전하지만, 그 앞의 이 조회는 아니었다).
+  try {
+    if (!(await wantsEmailNotifications(task.assigneeId))) return
+    notifyAssigned({
+      to: decryptUser(task.assignee).email,
+      actorName: actor.name,
+      taskTitle: task.title,
+      link: `/tasks/${task.projectId}/${task.id}`,
+    })
+  } catch (err) {
+    console.error('[notify] notifyIfNewAssignee failed', { taskId: task.id, error: err.message })
+  }
 }
 
 router.get('/', requireProjectRole('member'), async (req, res) => {

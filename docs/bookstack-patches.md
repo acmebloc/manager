@@ -33,9 +33,12 @@
 | 14 | Apache vhost | Authorization 헤더를 PHP로 전달 (API 토큰 인증 선행조건) | 유지 |
 | 15 | `themes/acmebloc/layouts/parts/header-links(-shelves).blade.php`, `header.blade.php` (11번 갱신) | 서브메뉴(공간/문서함/설정) 활성 상태 표시 | 유지 (※ 아래 주의) |
 
-> **※ 뷰 오버라이드 주의** — 5·6번은 삭제되지는 않지만 **낡을 수 있다.** 테마의 복사본이
-> 원본을 완전히 대체하므로, 업그레이드로 원본에 새 마크업이 추가돼도 우리 복사본은 옛날
-> 화면을 계속 그린다. 업그레이드 후에는 아래 "업그레이드 후 점검"의 diff를 꼭 돌려볼 것.
+> **※ 뷰 오버라이드 주의** — 5·6·12번(`header-links.blade.php` 포함)은 삭제되지는
+> 않지만 **낡을 수 있다.** 테마의 복사본이 원본을 완전히 대체하므로, 업그레이드로
+> 원본에 새 마크업이 추가돼도 우리 복사본은 옛날 화면을 계속 그린다. 업그레이드
+> 후에는 아래 "업그레이드 후 점검"의 diff를 꼭 돌려볼 것 — 이 diff 루프는 세
+> 파일을 전부 확인해야 의미가 있다. 하나라도 빠뜨리면 "diff 없음"이 실제로는
+> "확인 안 한 파일이 있다"는 뜻인데도 전부 괜찮다는 거짓 안심을 준다.
 >
 > 같은 이유로 `layouts/base.blade.php`(루트 레이아웃)는 **일부러 테마에 두지 않았다.**
 > 스크립트·메타태그가 모두 거기 있어서, 고정해두면 업그레이드 때 사이트가 미묘하게 깨진다.
@@ -936,13 +939,16 @@ sudo chown -R bookstack:bookstack $BS/themes/acmebloc
 sudo -u bookstack bash -c "cd $BS && php artisan view:clear"
 ```
 
-> **확인 필요** — `header-links.blade.php`는 GitHub의 최신 BookStack 소스를 참고해
-> 작성했지만, 실제로는 서버의 원본을 그대로 복사해서 패치하므로 버전 차이는 문제 없다.
-> 다만 정규식 앵커(`userCanOnAny` ~ `books_view`)가 실제 원본과 다르면 안전하게
-> abort하도록 만들어뒀다 — "block not found" 에러가 나면 그 파일을
-> `cat`해서 보여줄 것. `.acmebloc-header-shelves`의 `margin-left`는 사용자가 실제
-> 화면을 보고 210px로 확정(2026-08-28); `a` 링크의 `gap: 0` + `margin-right: 15px`도
-> 같은 라운드에 확정된 값이다.
+> **확인 필요** — `header-links-shelves.blade.php`는 GitHub의 최신 BookStack 소스를
+> 참고해 직접 작성한 새 파일이라, 실제 서버의 공간/문서함 마크업(권한 체크·아이콘
+> 매크로 등)이 조금이라도 다르면 앵커 검증 없이 그냥 조용히 잘못된 화면을 그린다 —
+> 배포 직후 반드시 공간/문서함 메뉴가 정상적으로(권한 있는 사람에게만) 노출되는지
+> 직접 확인할 것. 반면 `header-links.blade.php`는 서버의 원본을 그대로 복사해서
+> 정규식으로 패치하므로 버전 차이는 문제 없고, 정규식 앵커(`userCanOnAny` ~
+> `books_view`)가 실제 원본과 다르면 안전하게 abort하도록 만들어뒀다 — "block not
+> found" 에러가 나면 그 파일을 `cat`해서 보여줄 것. `.acmebloc-header-shelves`의
+> `margin-left`는 사용자가 실제 화면을 보고 210px로 확정(2026-08-28); `a` 링크의
+> `gap: 0` + `margin-right: 15px`도 같은 라운드에 확정된 값이다.
 
 ---
 
@@ -1119,16 +1125,25 @@ sudo -u bookstack bash -c "cd $BS && php artisan view:clear"
 
 BookStack을 `git pull`로 올린 뒤에는 이 순서로 확인한다.
 
-**1) 코어 수정 재적용** — 7번 스크립트를 다시 실행한다. 이미 적용돼 있으면
-"already patched"만 출력하고 아무것도 바꾸지 않는다.
+**1) 코어 수정 재적용** — 7번(`User.php`)과 9번(`lang/ko/entities.php`) 스크립트를
+**둘 다** 다시 실행한다. 둘 다 `git pull`이 되돌리는 코어 파일 직접 수정이라
+(위 요약표), 하나만 재적용하면 안 돌린 쪽은 조용히 BookStack 기본값으로
+되돌아간다 — 9번을 빠뜨리면 화면 확인(4번)에서 로그인/로그아웃은 멀쩡해
+보여도 공간/문서함/섹션/문서 명칭이 책꽂이/책/챕터/페이지로 되돌아간 걸
+놓치기 쉽다. 이미 적용돼 있으면 각각 "already patched"만 출력하고 아무것도
+바꾸지 않는다.
 
 **2) 뷰 오버라이드가 낡지 않았는지 대조** — 테마의 복사본은 지워지지 않지만 원본이
 바뀌어도 따라가지 않는다. 우리 편집분(메뉴바 추가, 항목 제거) 외에 원본 쪽 변경이
-보이면 5·6번 스크립트로 새 원본에서 다시 만든다.
+보이면, `header.blade.php`/`header-user-menu.blade.php`는 5·6번 스크립트로 새
+원본에서 다시 만든다. `header-links.blade.php`(12번)는 스크립트가 파일이 이미
+있으면 건드리지 않으므로(`if [ ! -f ... ]`), 새 원본을 반영하려면 테마의 복사본을
+먼저 지우고 12번 스크립트를 다시 실행해야 한다 — 그 뒤 15번(active 클래스)도
+다시 실행해야 설정 링크의 active 표시가 남아있다.
 
 ```bash
 BS=/var/www/bookstack/app
-for f in layouts/parts/header.blade.php layouts/parts/header-user-menu.blade.php; do
+for f in layouts/parts/header.blade.php layouts/parts/header-user-menu.blade.php layouts/parts/header-links.blade.php; do
   echo "=== $f ==="
   sudo diff "$BS/resources/views/$f" "$BS/themes/acmebloc/$f"
 done

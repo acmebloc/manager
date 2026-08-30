@@ -90,14 +90,25 @@ async function notifyNewFollowers({ schedule, actor, newUserIds }) {
   const link = schedule.projectId ? `/schedule?projectId=${schedule.projectId}` : '/schedule'
   for (const follower of schedule.followers) {
     if (!newUserIds.has(follower.user.id) || follower.user.id === actor.id) continue
-    if (!(await wantsEmailNotifications(follower.user.id))) continue
-    const recipient = decryptUser(follower.user)
-    notifyScheduleFollower({
-      to: recipient.email,
-      actorName: actor.name,
-      scheduleTitle: schedule.title,
-      link,
-    })
+    // 호출부가 이 함수를 await 없이 fire-and-forget으로 부르므로, 참조자
+    // 한 명 처리 중 DB 조회가 실패해도 나머지 참조자 알림을 계속 시도하고
+    // 프로세스가 죽지 않도록 참조자별로 감싼다.
+    try {
+      if (!(await wantsEmailNotifications(follower.user.id))) continue
+      const recipient = decryptUser(follower.user)
+      notifyScheduleFollower({
+        to: recipient.email,
+        actorName: actor.name,
+        scheduleTitle: schedule.title,
+        link,
+      })
+    } catch (err) {
+      console.error('[notify] notifyNewFollowers failed', {
+        scheduleId: schedule.id,
+        userId: follower.user.id,
+        error: err.message,
+      })
+    }
   }
 }
 
@@ -184,7 +195,12 @@ function parseRecurrence(recurrence, startAt) {
 }
 
 router.post('/', async (req, res) => {
-  const { title, startAt, endAt, projectId, followerIds = [], recurrence } = req.body
+  const { title, startAt, endAt, projectId, followerIds: rawFollowerIds = [], recurrence } = req.body
+  // 중복 id가 섞여 오면(더블클릭 등) findMany는 유일한 사용자당 한 행만
+  // 돌려주므로 followerIds.length와 어긋나 멀쩡한 멤버인데도 검증에서
+  // 오탐 거부된다 — 진입점에서 한 번만 중복 제거해두면 검증도, 이후 createMany
+  // 삽입(스케줄당-사용자 unique 제약과 충돌)도 둘 다 안전해진다.
+  const followerIds = Array.isArray(rawFollowerIds) ? [...new Set(rawFollowerIds)] : rawFollowerIds
   if (!title || !startAt) {
     return res.status(400).json({ error: 'title and startAt are required' })
   }
@@ -242,7 +258,10 @@ router.patch('/:id', async (req, res) => {
     return res.status(404).json({ error: 'Not found' })
   }
 
-  const { title, startAt, endAt, projectId, followerIds, recurrence } = req.body
+  const { title, startAt, endAt, projectId, followerIds: rawFollowerIds, recurrence } = req.body
+  // POST 쪽과 동일한 이유로 중복 제거 — undefined(팔로워를 안 건드림)는
+  // Array.isArray가 false라 그대로 통과한다.
+  const followerIds = Array.isArray(rawFollowerIds) ? [...new Set(rawFollowerIds)] : rawFollowerIds
   const nextProjectId = projectId !== undefined ? projectId || null : existing.projectId
   const nextStartAt = startAt !== undefined ? startAt : existing.startAt
   const nextEndAt = endAt !== undefined ? endAt : existing.endAt

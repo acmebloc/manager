@@ -296,7 +296,7 @@ function ProjectDetailPage() {
                 label="게시판"
                 external
               />
-              {isPm && !project.bookstackShelfId && (
+              {isPm && Boolean(project.bookstackSyncError) && (
                 <>
                   <span aria-hidden="true">·</span>
                   <button
@@ -304,7 +304,7 @@ function ProjectDetailPage() {
                     onClick={syncBookstack}
                     disabled={bookstackSyncing}
                     className="text-sm text-gray-400 hover:text-gray-700 disabled:opacity-50 dark:text-gray-500 dark:hover:text-gray-300"
-                    title={project.bookstackSyncError || '게시판 공간이 아직 연동되지 않았습니다'}
+                    title={project.bookstackSyncError}
                   >
                     {bookstackSyncing ? '공간 연동 중…' : '공간 연동'}
                   </button>

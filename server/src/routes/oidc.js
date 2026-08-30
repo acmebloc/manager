@@ -127,7 +127,17 @@ router.post('/token', express.urlencoded({ extended: false }), async (req, res) 
   if (!authCode || authCode.expiresAt < new Date() || authCode.redirectUri !== redirect_uri) {
     return res.status(400).json({ error: 'invalid_grant' })
   }
-  await prisma.oidcAuthCode.delete({ where: { code } })
+
+  // deleteMany (never throws if the row is already gone), not delete — a
+  // client retry after a perceived timeout can send the same code twice in
+  // quick succession, and both requests can pass the findUnique check above
+  // before either delete commits. Whichever request's delete actually
+  // removes the row (count === 1) wins the exchange; the loser gets a clean
+  // invalid_grant instead of crashing on delete's "record not found".
+  const { count } = await prisma.oidcAuthCode.deleteMany({ where: { code } })
+  if (count === 0) {
+    return res.status(400).json({ error: 'invalid_grant' })
+  }
 
   if (authCode.codeChallenge) {
     if (!code_verifier) {
