@@ -16,8 +16,15 @@ const shortcutLinkClassName =
 // 규칙을 재사용. 세 바로가기는 전부 같은 모양·상호작용으로 만든다 — 게시판은
 // BookStack 프로젝트별 연동 전이라 대상 URL만 없을 뿐, 별도 비활성 스타일을
 // 두지 않는다 (docs/project-menu-upgrade-spec.md 4.6).
-function ShortcutLink({ to, label }) {
+function ShortcutLink({ to, label, external = false }) {
   if (!to) return <a className={shortcutLinkClassName}>{label}</a>
+  if (external) {
+    return (
+      <a href={to} className={shortcutLinkClassName}>
+        {label}
+      </a>
+    )
+  }
   return (
     <Link to={to} className={shortcutLinkClassName}>
       {label}
@@ -44,6 +51,8 @@ function ProjectDetailPage() {
   const [draftMembers, setDraftMembers] = useState([])
   const [savingMembers, setSavingMembers] = useState(false)
   const [memberError, setMemberError] = useState('')
+
+  const [bookstackSyncing, setBookstackSyncing] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -127,6 +136,18 @@ function ProjectDetailPage() {
       navigate('/projects')
     } catch (err) {
       setError(err.message)
+    }
+  }
+
+  const syncBookstack = async () => {
+    setBookstackSyncing(true)
+    try {
+      const updated = await apiFetch(`/api/projects/${id}/bookstack-sync`, { method: 'POST' })
+      setProject((current) => ({ ...current, ...updated }))
+    } catch (err) {
+      setProject((current) => ({ ...current, bookstackSyncError: err.message }))
+    } finally {
+      setBookstackSyncing(false)
     }
   }
 
@@ -267,7 +288,25 @@ function ProjectDetailPage() {
               <span aria-hidden="true">·</span>
               <ShortcutLink to={`/schedule?projectId=${id}`} label="일정" />
               <span aria-hidden="true">·</span>
-              <ShortcutLink to={null} label="게시판" />
+              <ShortcutLink
+                to={project.bookstackShelfSlug ? `/board/shelves/${project.bookstackShelfSlug}` : null}
+                label="게시판"
+                external
+              />
+              {isPm && !project.bookstackShelfId && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <button
+                    type="button"
+                    onClick={syncBookstack}
+                    disabled={bookstackSyncing}
+                    className="text-sm text-gray-400 hover:text-gray-700 disabled:opacity-50 dark:text-gray-500 dark:hover:text-gray-300"
+                    title={project.bookstackSyncError || '게시판 공간이 아직 연동되지 않았습니다'}
+                  >
+                    {bookstackSyncing ? '공간 연동 중…' : '공간 연동'}
+                  </button>
+                </>
+              )}
             </div>
           </div>
           {isPm && (

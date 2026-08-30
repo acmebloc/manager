@@ -56,6 +56,16 @@ model Project {
   tasks     Task[]
   schedules Schedule[]
   comments  ProjectComment[]
+
+  // BookStack 공간(Shelf) 자동 연동 — 신규 프로젝트만 대상, 실패해도 프로젝트
+  // 생성 자체는 막지 않는 느슨한 결합(server/src/lib/bookstack.js). null이면
+  // 아직 연동 전이거나 마지막 시도가 실패한 상태 — bookstackSyncError 참고.
+  bookstackShelfId   Int?
+  bookstackShelfSlug String?
+  bookstackBookIds   Int[]     @default([])
+  bookstackRoleId    Int?
+  bookstackSyncedAt  DateTime?
+  bookstackSyncError String?
 }
 
 // Who can see and touch a project, and how much. A project must always keep

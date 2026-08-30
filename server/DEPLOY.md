@@ -301,6 +301,47 @@ sudo systemctl restart pm2-manager
 curl http://localhost:4000/health
 ```
 
+## 13. 프로젝트별 BookStack 공간 자동 연동 반영 (기존 배포에 추가 적용)
+
+프로젝트 생성 시 BookStack 공간(Shelf) + 문서함 3개(공지사항/Weekly/자료실)를
+자동으로 만들고, 프로젝트 멤버만 접근 가능하도록 권한을 동기화하는 기능. 신규
+프로젝트에만 적용되고(기존 프로젝트는 소급 적용 안 함), BookStack API가 실패해도
+프로젝트 생성 자체는 항상 성공하는 느슨한 결합(`server/src/lib/bookstack.js`) —
+BookStack 쪽 API 토큰이 아직 없거나 만료돼도 Manager 나머지 기능은 영향받지 않는다.
+
+스키마 변경 있음(`Project`에 `bookstackShelfId` 등 6개 컬럼 추가) — `migrate deploy`
+필요.
+
+```bash
+sudo -u manager /bin/bash
+cd /var/www/manager/app
+git pull
+npm install && npm run build
+
+cd server
+npm install
+npx prisma migrate deploy
+npx prisma generate   # migrate deploy 다음에 — 순서 바뀌면 8월 26일 사고 재발
+```
+
+`.env`에 BookStack API 토큰 추가 (`.env.example` 참고 — BookStack 관리자 계정
+우측 상단 프로필 → 프로필 편집 → API Tokens에서 발급, Token ID/Secret은 발급
+시 한 번만 표시됨). 로컬 개발 `.env`에는 넣지 않아도 됨 — 셋 중 하나라도 없으면
+조용히 건너뛰도록 만들어져 있다:
+
+```bash
+cat >> .env <<'EOF'
+BOOKSTACK_API_URL=https://manager.acmebloc.com/board/api
+BOOKSTACK_API_TOKEN_ID=여기에_발급받은_Token_ID
+BOOKSTACK_API_TOKEN_SECRET=여기에_발급받은_Token_Secret
+EOF
+chmod 600 .env
+exit   # manager 셸에서 나가기
+
+sudo -u manager pm2 restart manager-api
+curl http://localhost:4000/health
+```
+
 ## 코드 업데이트할 때마다
 
 ```bash

@@ -3,6 +3,7 @@ import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
 import { assertNotLastPm, isValidRole, normalizeRole, requireProjectRole } from '../lib/projectAccess.js'
 import { deleteAttachmentFiles } from '../lib/uploads.js'
+import { provisionProjectSpace, retryProjectSpace, syncMemberRole } from '../lib/bookstack.js'
 
 const router = Router()
 
@@ -79,11 +80,32 @@ router.post('/', async (req, res) => {
     include: { members: { select: memberSelect } },
   })
 
+  // fire-and-forget — BookStack 공간 생성은 별도 프로세스라, 응답을 그 왕복
+  // 시간에 묶어두지 않는다. 실패해도 project.bookstackSyncError에만 남는다.
+  provisionProjectSpace(project.id)
+
   res.status(201).json({
     ...project,
     members: project.members.map(decryptMember),
     myRole: myRoleFor(project, req.user),
   })
+})
+
+// PM이 누르는 "게시판 연동 재시도" — 아직 연동 전이면 처음부터, 이미 있으면
+// 현재 멤버 전원의 역할 부여만 다시 맞춘다. 이번엔 결과를 바로 보여줘야 하므로
+// (버튼 누른 사람이 성공/실패를 알아야 함) await한다.
+router.post('/:id/bookstack-sync', requireProjectRole('pm'), async (req, res) => {
+  try {
+    const project = await retryProjectSpace(req.params.id)
+    res.json({
+      bookstackShelfId: project.bookstackShelfId,
+      bookstackShelfSlug: project.bookstackShelfSlug,
+      bookstackSyncedAt: project.bookstackSyncedAt,
+      bookstackSyncError: project.bookstackSyncError,
+    })
+  } catch (err) {
+    res.status(502).json({ error: err.message })
+  }
 })
 
 router.get('/:id', requireProjectRole('member'), async (req, res) => {
@@ -167,6 +189,7 @@ router.post('/:id/members', requireProjectRole('pl'), async (req, res) => {
     data: { projectId: req.params.id, userId, role },
     select: memberSelect,
   })
+  syncMemberRole(req.params.id, userId, 'add') // fire-and-forget
   res.status(201).json(decryptMember(member))
 })
 
@@ -202,6 +225,7 @@ router.delete('/:id/members/:memberId', requireProjectRole('pl'), async (req, re
   if (problem) return res.status(400).json({ error: problem })
 
   await prisma.projectMember.delete({ where: { id: req.params.memberId } })
+  syncMemberRole(req.params.id, member.userId, 'remove') // fire-and-forget
   res.status(204).end()
 })
 
