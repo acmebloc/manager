@@ -100,7 +100,7 @@ export async function provisionProjectSpace(projectId) {
 
     const books = []
     for (const label of BOOK_NAMES) {
-      const book = await createBook(`${project.name} · ${label}`)
+      const book = await createBook(label)
       books.push(book)
     }
     const shelf = await createShelf(project.name, books.map((b) => b.id))
