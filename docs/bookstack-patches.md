@@ -31,6 +31,7 @@
 | 12 | `themes/acmebloc/layouts/parts/header-links(-shelves).blade.php`, `header.blade.php` | 로고 삭제 + 공간/문서함 실제 이동 | 유지 (※ 아래 주의) |
 | 13 | 설정 DB (커스텀 head) | 파비콘을 Manager와 통일 | 유지 |
 | 14 | Apache vhost | Authorization 헤더를 PHP로 전달 (API 토큰 인증 선행조건) | 유지 |
+| 15 | `themes/acmebloc/layouts/parts/header-links(-shelves).blade.php`, `header.blade.php` (11번 갱신) | 서브메뉴(공간/문서함/설정) 활성 상태 표시 | 유지 (※ 아래 주의) |
 
 > **※ 뷰 오버라이드 주의** — 5·6번은 삭제되지는 않지만 **낡을 수 있다.** 테마의 복사본이
 > 원본을 완전히 대체하므로, 업그레이드로 원본에 새 마크업이 추가돼도 우리 복사본은 옛날
@@ -760,7 +761,7 @@ path = sys.argv[1]
 with open(path) as f:
     content = f.read()
 
-if "MANAGER-NAV-V8" in content:
+if "MANAGER-NAV-V9" in content:
     print("already patched, skipping")
     raise SystemExit(0)
 
@@ -768,7 +769,7 @@ m = re.search(r'<!-- MANAGER-NAV(-V\d+)? -->.*?</style>\n(<script>.*?</script>\n
 if not m:
     raise SystemExit("old MANAGER-NAV block not found — aborting")
 
-snippet = """<!-- MANAGER-NAV-V8 -->
+snippet = """<!-- MANAGER-NAV-V9 -->
 <nav class="acmebloc-topnav" aria-label="Manager 메뉴">
     <a href="/dashboard">홈</a>
     <a href="/projects">프로젝트</a>
@@ -799,6 +800,12 @@ header#header, header#header * {
 .acmebloc-header-shelves { display: flex; align-items: center; gap: 0.75rem; margin-left: 210px; }
 .acmebloc-header-shelves a { display: inline-flex; align-items: center; gap: 0; margin-right: 15px; color: #4f46e5; text-decoration: none; font-size: 0.875rem; }
 .acmebloc-header-shelves a:hover { text-decoration: underline; }
+/* 15번 — 공간/문서함/설정에 현재 보고 있는 페이지 기준 활성 표시 (active 클래스는
+   header-links-shelves.blade.php / header-links.blade.php에서 request()->is()로 부여) */
+.header-links a.active, .acmebloc-header-shelves a.active {
+  font-weight: 700 !important;
+  border-bottom: 2px solid #4f46e5 !important;
+}
 #header-search-box-input {
   background: #fff !important; border: 1px solid #d1d5db !important; color: #111827 !important;
   border-radius: 0.375rem !important; box-shadow: none !important;
@@ -1041,6 +1048,67 @@ sudo systemctl reload apache2
 
 ---
 
+## 15. 게시판 서브메뉴 활성 상태 표시 (공간/문서함/설정)
+
+BookStack 기본 헤더는 지금 보고 있는 페이지가 뭔지에 따라 메뉴에 활성 표시를 해주는
+기능이 없다. 12번에서 이미 우리가 소유한 파일(`header-links-shelves.blade.php`는
+직접 작성, `header-links.blade.php`는 원본을 복사해 수정)이라 `request()->is()`로
+직접 조건부 `active` 클래스를 넣는다 — 새 파일도, 코어 수정도 아니라서 안전하다.
+스타일은 11번(V9)에 이미 추가해뒀다(`.header-links a.active`,
+`.acmebloc-header-shelves a.active`).
+
+```bash
+BS=/var/www/bookstack/app
+
+echo "1) header-links-shelves.blade.php — active 클래스 추가해서 다시 생성"
+sudo tee $BS/themes/acmebloc/layouts/parts/header-links-shelves.blade.php > /dev/null <<'EOF'
+<div class="acmebloc-header-shelves">
+@if (user()->hasAppAccess())
+    @if(userCanOnAny(\BookStack\Permissions\Permission::View, \BookStack\Entities\Models\Bookshelf::class) || userCan(\BookStack\Permissions\Permission::BookshelfViewAll) || userCan(\BookStack\Permissions\Permission::BookshelfViewOwn))
+        <a href="{{ url('/shelves') }}" data-shortcut="shelves_view" class="{{ request()->is('shelves*') ? 'active' : '' }}">@icon('bookshelf'){{ trans('entities.shelves') }}</a>
+    @endif
+    <a href="{{ url('/books') }}" data-shortcut="books_view" class="{{ request()->is('books*') ? 'active' : '' }}">@icon('books'){{ trans('entities.books') }}</a>
+@endif
+</div>
+EOF
+
+echo "2) header-links.blade.php — 설정 링크에 active 클래스 추가"
+sudo python3 - "$BS/themes/acmebloc/layouts/parts/header-links.blade.php" <<'PYEOF'
+import re, sys
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+
+if "request()->is('settings*')" in content:
+    print('header-links.blade.php: already patched, skipping')
+else:
+    # 줄바꿈/들여쓰기가 실제 파일마다 다를 수 있어 공백에 관대한 정규식으로 매치
+    pattern = re.compile(
+        r'(<a\s+href="\{\{\s*url\(\'/settings\'\)\s*\}\}"\s*data-shortcut="settings_view")\s*>',
+        re.S,
+    )
+    new_content, count = pattern.subn(
+        r"""\1 class="{{ request()->is('settings*') ? 'active' : '' }}">""", content, count=1
+    )
+    if count == 0:
+        raise SystemExit("settings link not found in expected form -- aborting, check file manually")
+    with open(path, 'w') as f:
+        f.write(new_content)
+    print('header-links.blade.php: active class added to settings link')
+PYEOF
+
+sudo chown -R bookstack:bookstack $BS/themes/acmebloc
+sudo -u bookstack bash -c "cd $BS && php artisan view:clear"
+```
+
+> **확인 필요** — `request()->is('shelves*')`/`'books*'`/`'settings*'`는 BookStack의
+> 실제 URL 구조(`/shelves/{slug}`, `/books/{slug}`, `/books/{book}/page/{page}` 등)
+> 기준으로 넣었다. 문서함 안의 섹션·문서를 볼 때도 `/books/...`로 시작하니 "문서함"이
+> 계속 활성 표시되는 게 의도한 동작이다. 적용 후 화면에서 안 눌리거나 안 켜지면
+> 알려줄 것.
+
+---
+
 ## 업그레이드 후 점검
 
 BookStack을 `git pull`로 올린 뒤에는 이 순서로 확인한다.
@@ -1108,7 +1176,7 @@ sudo grep -E "^\s*'(shelf|book|chapter|page)'\s*=>" $BS/lang/ko/entities.php 2>/
   || sudo grep -E "^\s*'(shelf|book|chapter|page)'\s*=>" $BS/resources/lang/ko/entities.php 2>/dev/null
 echo
 echo "=== 게시판 서브메뉴 마커 (1 이상이어야 정상) ==="
-sudo grep -c "MANAGER-NAV-V8" $BS/themes/acmebloc/layouts/parts/header.blade.php
+sudo grep -c "MANAGER-NAV-V9" $BS/themes/acmebloc/layouts/parts/header.blade.php
 echo
 echo "=== 로고 삭제(header.blade.php가 shelves 파샬을 쓰는지, 1이어야 정상) ==="
 sudo grep -c "header-links-shelves" $BS/themes/acmebloc/layouts/parts/header.blade.php
