@@ -674,10 +674,14 @@ Manager의 톤(인디고 `#4f46e5` 포인트 컬러, 시스템 기본 폰트, �
 
 **2026-08-30 확장:** 처음엔 `body`에만 폰트를 걸어서 폼 요소(입력창/버튼/선택박스는
 브라우저 기본 폰트를 따로 쓰는 경우가 많음)에는 안 먹혔을 수 있다 — `!important` +
-대상 확장으로 강화하고, 배경·글자색도 명시적으로 맞췄다. 다만 버튼/카드/테이블처럼
-실제 마크업을 본 적 없는 요소는 여기서 억지로 셀렉터를 추측하지 않는다 — 헤더처럼
-실제 markup을 받아서 정확히 맞추는 편이 이전 세션에서 훨씬 안전했다(11·12번 시행착오
-참고).
+대상 확장으로 강화했다. 다만 버튼/카드/테이블처럼 실제 마크업을 본 적 없는 요소는
+여기서 억지로 셀렉터를 추측하지 않는다 — 헤더처럼 실제 markup을 받아서 정확히
+맞추는 편이 이전 세션에서 훨씬 안전했다(11·12번 시행착오 참고).
+
+**2026-08-30 되돌림:** 같은 라운드에서 배경을 흰색(`#ffffff`)으로 강제했었는데,
+모니터 밝기에 따라 눈부심이 있다는 피드백을 받아 배경 지정을 뺐다 — BookStack
+자체 기본 배경으로 되돌아간다. 전체적인 톤은 이후 라운드에서 하나씩 다시
+맞춰나가기로 함. 글자색(`#111827`)은 배경과 무관하게 유지.
 
 ```bash
 sudo tee /tmp/acmebloc-design.php > /dev/null <<'EOF'
@@ -691,25 +695,27 @@ $svc = app(\BookStack\Settings\SettingService::class);
 $svc->put('app-color', '#4f46e5');       // Tailwind indigo-600, Manager 포인트 컬러
 $svc->put('app-color-light', '#eef2ff'); // indigo-50, 옅은 배경/hover용
 
-$marker = 'ACMEBLOC-DESIGN-TONE-V2';
+$marker = 'ACMEBLOC-DESIGN-TONE-V3';
 $head = (string) $svc->get('app-custom-head', '');
-if (str_contains($head, $marker)) {
-    echo "design tone css: already set, skipping\n";
-} else {
-    $css = "\n<!-- {$marker} -->\n<style>\n"
-         . "  /* Manager와 같은 시스템 기본 폰트로 통일 (Tailwind 기본 font-sans 스택) —\n"
-         . "     폼 요소는 브라우저 기본 폰트를 따로 쓰는 경우가 많아 명시적으로 포함 */\n"
-         . "  body, input, textarea, select, button {\n"
-         . "    font-family: ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\" !important;\n"
-         . "  }\n"
-         . "  /* 배경/글자색 — Manager의 흰 배경 + 진한 회색(gray-900) 글자 */\n"
-         . "  body { background: #ffffff !important; color: #111827 !important; }\n"
-         . "  /* 로고 숨김 — Manager 메뉴바에 이미 브랜딩이 있어 중복 노출 안 함 */\n"
-         . "  .logo, header .logo-image, a.logo { display: none !important; }\n"
-         . "</style>\n";
-    $svc->put('app-custom-head', $head . $css);
-    echo "design tone css: appended\n";
-}
+
+// custom head는 이어붙이기만 하는 채널이라, V2에서 넣은 흰 배경 규칙을 새로
+// 추가만 하면 지워지지 않고 그대로 남아 계속 이긴다 — 예전 버전 블록을 먼저
+// 통째로 제거하고 나서 새 블록을 붙인다(버전 무관하게 매치되도록 정규식 사용).
+$head = preg_replace('/\n?<!-- ACMEBLOC-DESIGN-TONE(-V\d+)? -->.*?<\/style>\n/s', '', $head);
+
+$css = "\n<!-- {$marker} -->\n<style>\n"
+     . "  /* Manager와 같은 시스템 기본 폰트로 통일 (Tailwind 기본 font-sans 스택) —\n"
+     . "     폼 요소는 브라우저 기본 폰트를 따로 쓰는 경우가 많아 명시적으로 포함 */\n"
+     . "  body, input, textarea, select, button {\n"
+     . "    font-family: ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\" !important;\n"
+     . "  }\n"
+     . "  /* 글자색만 유지 — 배경은 흰색이 눈부시다는 피드백으로 V3에서 되돌림(BookStack 기본값 사용) */\n"
+     . "  body { color: #111827 !important; }\n"
+     . "  /* 로고 숨김 — Manager 메뉴바에 이미 브랜딩이 있어 중복 노출 안 함 */\n"
+     . "  .logo, header .logo-image, a.logo { display: none !important; }\n"
+     . "</style>\n";
+$svc->put('app-custom-head', $head . $css);
+echo "design tone css: old version block removed, V3 appended\n";
 EOF
 
 sudo -u bookstack php /tmp/acmebloc-design.php
