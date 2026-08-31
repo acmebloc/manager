@@ -26,6 +26,23 @@ function GoogleGIcon() {
   )
 }
 
+// `continue` is attacker-reachable — it's just a query parameter, and this
+// page is the site root, so anyone can hand out a manager.acmebloc.com link
+// that lands somewhere else entirely. The only legitimate producer is
+// /oidc/authorize's "you're not logged in yet" redirect (oidc.js), which
+// always emits a path on this origin, so that's all we accept.
+//
+// Rejected on purpose: absolute URLs ("https://elsewhere"), protocol-relative
+// ones ("//elsewhere" — the browser reads those as absolute), the backslash
+// variant ("/\elsewhere", which some browsers normalize the same way), and
+// anything non-string. Everything else is a plain same-origin path.
+function safeContinuePath(raw) {
+  if (typeof raw !== 'string' || raw === '') return null
+  if (raw[0] !== '/') return null
+  if (raw[1] === '/' || raw[1] === '\\') return null
+  return raw
+}
+
 // If we got here via a redirect from the OIDC /authorize endpoint (e.g.
 // BookStack, because there was no manager_session cookie yet), `continue`
 // points back at that same /oidc/authorize request so it can finish once
@@ -33,9 +50,9 @@ function GoogleGIcon() {
 // it needs a real navigation — not React Router.
 function goAfterLogin(navigate) {
   const params = new URLSearchParams(window.location.search)
-  const continueUrl = params.get('continue')
-  if (continueUrl) {
-    window.location.href = continueUrl
+  const continuePath = safeContinuePath(params.get('continue'))
+  if (continuePath) {
+    window.location.href = continuePath
   } else {
     navigate('/dashboard')
   }
