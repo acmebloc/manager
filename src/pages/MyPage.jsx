@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import PmHandoverDialog from '../components/PmHandoverDialog'
 import Toast from '../components/Toast'
+import { apiFetch } from '../lib/api'
 import { endGoogleSession } from '../lib/googleAuth'
 import { resizeImageFile } from '../lib/imageUtils'
 import { clearSession, loadSession, saveSession } from '../lib/secureProfileStore'
@@ -82,9 +83,16 @@ function MyPage() {
     await clearLocalSession()
   }, [clearLocalSession])
 
-  // confirm 없이 바로 호출하는 내부용 — PM을 다 넘긴 직후 재시도할 때는
-  // 사용자가 이미 한 번 확인한 상태라 다시 묻지 않는다.
-  const submitWithdraw = useCallback(async () => {
+  // 최종 확인창 → 실제 탈퇴. PM 인계가 필요한 경우든 아니든 마지막 단계는
+  // 항상 여기라, 확인을 누른 뒤에 막히는 일이 없다.
+  const confirmAndWithdraw = useCallback(async () => {
+    const confirmed = window.confirm(
+      '회원정보가 삭제되며 참여 중인 모든 프로젝트에서 제외됩니다.\n' +
+        '작성한 글과 배정된 일감은 비활성 상태로 남습니다.\n\n' +
+        '탈퇴하시겠습니까?',
+    )
+    if (!confirmed) return
+
     try {
       const res = await fetch('/api/me', {
         method: 'DELETE',
@@ -96,8 +104,8 @@ function MyPage() {
       }
 
       const payload = await res.json().catch(() => null)
-      // 유일한 PM인 프로젝트가 있으면 409 — 안내만 하고 끝내지 말고, 그 자리에서
-      // 넘길 수 있게 레이어를 띄운다.
+      // 여기까지 왔는데 409면, 확인 직전에 다른 PM이 빠져나가 다시 유일한 PM이
+      // 된 경우다. 드물지만 막다른 길로 두지 말고 인계 레이어를 다시 띄운다.
       if (res.status === 409 && payload?.solePmProjects?.length) {
         setSolePmProjects(payload.solePmProjects)
         setError('')
@@ -109,15 +117,24 @@ function MyPage() {
     }
   }, [session, clearLocalSession])
 
+  // 버튼을 누르면 먼저 PM 인계가 필요한지부터 확인한다 — 확인창을 띄운 뒤에
+  // 막아서 되돌리게 하는 대신, 막을 일이 있으면 그것부터 처리하게 한다.
   const handleWithdraw = useCallback(async () => {
-    const confirmed = window.confirm(
-      '회원정보가 삭제되며 참여 중인 모든 프로젝트에서 제외됩니다.\n' +
-        '작성한 글과 배정된 일감은 비활성 상태로 남습니다.\n\n' +
-        '탈퇴하시겠습니까?',
-    )
-    if (!confirmed) return
-    await submitWithdraw()
-  }, [submitWithdraw])
+    let blocking
+    try {
+      blocking = await apiFetch('/api/me/sole-pm-projects')
+    } catch (err) {
+      setError(err.message)
+      return
+    }
+
+    if (blocking.length > 0) {
+      setSolePmProjects(blocking)
+      setError('')
+      return
+    }
+    await confirmAndWithdraw()
+  }, [confirmAndWithdraw])
 
   const startEditName = () => {
     setNameDraft(session.profile.name)
@@ -292,7 +309,7 @@ function MyPage() {
           onClose={() => setSolePmProjects([])}
           onResolved={() => {
             setSolePmProjects([])
-            submitWithdraw()
+            confirmAndWithdraw()
           }}
         />
       )}
