@@ -23,16 +23,35 @@ function bookstackConfigured() {
   )
 }
 
+// fetch는 기본 타임아웃이 없다 — 게시판이 죽지 않고 "멈춰" 있으면 응답이 영원히
+// 오지 않는다. 그러면 홈 화면 통계(countPublishedPages)가 dashboard.js의
+// Promise.all 안에 있으므로 전 사용자의 홈이 같이 멈춘다. 이 파일이 실패를 삼켜서
+// 호출부를 막지 않겠다고 한 약속은, 실패가 "언젠가 도착"하는 게 아니라 제때
+// 끝날 때만 지켜진다.
+const REQUEST_TIMEOUT_MS = 5000
+
 async function bookstackRequest(method, path, body) {
   const base = process.env.BOOKSTACK_API_URL.replace(/\/+$/, '')
-  const res = await fetch(`${base}${path}`, {
-    method,
-    headers: {
-      Authorization: `Token ${process.env.BOOKSTACK_API_TOKEN_ID}:${process.env.BOOKSTACK_API_TOKEN_SECRET}`,
-      'Content-Type': 'application/json',
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  })
+  let res
+  try {
+    res = await fetch(`${base}${path}`, {
+      method,
+      headers: {
+        Authorization: `Token ${process.env.BOOKSTACK_API_TOKEN_ID}:${process.env.BOOKSTACK_API_TOKEN_SECRET}`,
+        'Content-Type': 'application/json',
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+  } catch (err) {
+    // 타임아웃이 그대로 올라가면 bookstackSyncError에 "The operation was
+    // aborted due to timeout" 같은 문구가 남는다 — PM이 재시도 버튼 툴팁으로
+    // 보는 문장이라, 무슨 일인지 알 수 있게 바꿔 던진다.
+    if (err.name === 'TimeoutError') {
+      throw new Error(`게시판 응답 없음 (${REQUEST_TIMEOUT_MS / 1000}초 초과): ${method} ${path}`)
+    }
+    throw err
+  }
   const text = await res.text()
   // 응답 바디가 JSON이 아닐 수 있다(장애/타임아웃 중엔 리버스 프록시의 HTML
   // 에러 페이지가 오기도 함) — res.ok보다 먼저 파싱하면 그런 경우 진짜 원인
@@ -164,8 +183,10 @@ export async function provisionProjectSpace(projectId) {
       await restrictToRole('book', book.id, role.id)
     }
 
+    let memberSyncFailed = false
     for (const member of project.members) {
-      await syncMemberRole(project.id, member.userId, 'add', { roleId: role.id })
+      const ok = await syncMemberRole(project.id, member.userId, 'add', { roleId: role.id })
+      if (!ok) memberSyncFailed = true
     }
 
     // update가 아니라 updateMany — 만드는 도중에(여러 번의 API 왕복 사이) 이
@@ -180,7 +201,10 @@ export async function provisionProjectSpace(projectId) {
         bookstackBookIds: books.map((b) => b.id),
         bookstackRoleId: role.id,
         bookstackSyncedAt: new Date(),
-        bookstackSyncError: null,
+        // 멤버 권한 부여가 하나라도 실패했다면 syncMemberRole이 방금 남긴 사유를
+        // 지우지 않는다 — 여기서 null로 덮으면 공간은 만들어졌는데 일부 멤버는
+        // 못 들어가는 상태가 아무 흔적 없이 "정상"으로 보인다.
+        ...(memberSyncFailed ? {} : { bookstackSyncError: null }),
         bookstackProvisioningStartedAt: null,
       },
     })
@@ -208,25 +232,40 @@ export async function provisionProjectSpace(projectId) {
 // (연동 전/실패 상태) 그 사용자가 BookStack에 로그인한 적이 없어 계정이 없으면
 // 조용히 넘어간다 — 다음 재시도(retryProjectSpace)나 그 사용자가 처음 게시판에
 // 로그인할 때 다시 시도할 기회가 있다.
+//
+// 성공하면 true, 실패하면 false를 돌려준다 — fire-and-forget 호출부는 무시해도
+// 되지만, 여러 멤버를 도는 루프(프로비저닝·재시도)는 이걸로 "한 명이라도
+// 실패했는지"를 알아야 아래에서 bookstackSyncError를 잘못 지우지 않는다.
 export async function syncMemberRole(projectId, userId, action, opts = {}) {
-  if (!bookstackConfigured()) return
+  if (!bookstackConfigured()) return true
   try {
     const roleId =
       opts.roleId ??
       (await prisma.project.findUnique({ where: { id: projectId }, select: { bookstackRoleId: true } }))
         ?.bookstackRoleId
-    if (!roleId) return
+    if (!roleId) return true
 
     const bookstackUserId = await findBookstackUserId(userId)
-    if (!bookstackUserId) return
+    if (!bookstackUserId) return true
 
     await updateBookstackUserRoles(bookstackUserId, (roleIds) =>
       action === 'add'
         ? Array.from(new Set([...roleIds, roleId]))
         : roleIds.filter((id) => id !== roleId),
     )
+    return true
   } catch (err) {
     console.error('[bookstack] syncMemberRole failed', { projectId, userId, action, error: err.message })
+    // 콘솔에만 남기면 이 파일 맨 위의 계약("실패 사유를 bookstackSyncError에
+    // 남겨 PM이 재시도할 수 있게 한다")이 깨진다 — 게다가 재시도 버튼 자체가
+    // bookstackSyncError가 있을 때만 렌더되므로(ProjectDetailPage), 기록하지
+    // 않으면 고칠 방법이 화면에서 사라진다. 특히 'remove' 실패는 회수가 안 된
+    // 채 남는 것이라, 조용히 넘어가면 제외된 멤버가 게시판 접근 권한을 계속
+    // 들고 있게 된다.
+    await prisma.project
+      .update({ where: { id: projectId }, data: { bookstackSyncError: err.message } })
+      .catch(() => {}) // 프로젝트가 이미 삭제된 경우 — 남길 곳이 없으니 그냥 넘어간다
+    return false
   }
 }
 
@@ -261,10 +300,66 @@ export async function deleteProjectSpace(project) {
   }
 }
 
+// 역할을 실제로 들고 있는 사람과 현재 멤버 목록을 맞춘다 — 프로젝트에서 빠졌는데
+// 아직 역할이 붙어 있는 사람에게서 회수한다.
+//
+// 이게 없으면 회수 실패가 영구히 남는다: 멤버 제외·탈퇴 시점의 syncMemberRole은
+// fire-and-forget이라 실패해도 그걸로 끝이고, 재시도 경로는 "현재 멤버에게 추가"만
+// 해왔기 때문에 잘못 남은 권한을 되돌리는 코드가 어디에도 없었다.
+//
+// 비교는 BookStack 사용자 id로만 한다 — roles read 응답의 users 항목에 어떤 필드가
+// 실려오는지는 버전마다 다를 수 있지만 id는 항상 있다. users 자체가 없으면(구버전
+// 응답) 조용히 건너뛴다: 위의 추가 동기화는 이미 끝났으므로 재시도가 실패로
+// 보이지는 않아야 한다.
+async function revokeRoleFromNonMembers(project) {
+  const roleId = project.bookstackRoleId
+  if (!roleId) return true
+
+  try {
+    const allowed = new Set()
+    for (const member of project.members) {
+      const bookstackUserId = await findBookstackUserId(member.userId)
+      if (bookstackUserId) allowed.add(bookstackUserId)
+    }
+
+    const role = await bookstackRequest('GET', `/roles/${roleId}`)
+    if (!Array.isArray(role?.users)) return true
+
+    let ok = true
+    for (const holder of role.users) {
+      if (!holder?.id || allowed.has(holder.id)) continue
+      try {
+        await updateBookstackUserRoles(holder.id, (roleIds) => roleIds.filter((id) => id !== roleId))
+      } catch (err) {
+        console.error('[bookstack] revoke role failed', {
+          projectId: project.id,
+          bookstackUserId: holder.id,
+          error: err.message,
+        })
+        await prisma.project
+          .update({ where: { id: project.id }, data: { bookstackSyncError: err.message } })
+          .catch(() => {})
+        ok = false
+      }
+    }
+    return ok
+  } catch (err) {
+    console.error('[bookstack] revokeRoleFromNonMembers failed', {
+      projectId: project.id,
+      error: err.message,
+    })
+    await prisma.project
+      .update({ where: { id: project.id }, data: { bookstackSyncError: err.message } })
+      .catch(() => {})
+    return false
+  }
+}
+
 // PM이 누르는 "게시판 연동 재시도" 버튼에서 호출 — 이번엔 await해서 결과를 바로
 // 응답에 반영한다. 아직 공간이 없으면 처음부터 프로비저닝, 이미 있으면 현재 멤버
-// 전원의 역할 부여만 다시 맞춘다(중간에 BookStack 로그인 안 한 멤버가 이제 계정이
-// 생겼을 수 있으므로).
+// 전원의 역할 부여를 다시 맞추고(중간에 BookStack 로그인 안 한 멤버가 이제 계정이
+// 생겼을 수 있으므로), 더 이상 멤버가 아닌 사람에게서 역할을 회수한다 — 양방향으로
+// 맞춰야 제외·탈퇴 시점에 실패한 회수도 여기서 복구된다.
 export async function retryProjectSpace(projectId) {
   if (!bookstackConfigured()) {
     throw new Error('BookStack 연동이 서버에 설정되어 있지 않습니다')
@@ -281,12 +376,19 @@ export async function retryProjectSpace(projectId) {
       throw new Error('지금 다른 연동 작업이 진행 중입니다. 잠시 후 다시 시도해주세요')
     }
   } else {
+    let syncFailed = false
     for (const member of project.members) {
-      await syncMemberRole(projectId, member.userId, 'add', { roleId: project.bookstackRoleId })
+      const ok = await syncMemberRole(projectId, member.userId, 'add', { roleId: project.bookstackRoleId })
+      if (!ok) syncFailed = true
     }
+    if (!(await revokeRoleFromNonMembers(project))) syncFailed = true
+
     await prisma.project.update({
       where: { id: projectId },
-      data: { bookstackSyncedAt: new Date(), bookstackSyncError: null },
+      data: {
+        bookstackSyncedAt: new Date(),
+        ...(syncFailed ? {} : { bookstackSyncError: null }),
+      },
     })
   }
 
