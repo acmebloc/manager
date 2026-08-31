@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { NavLink, Navigate, Outlet } from 'react-router-dom'
+import { NavLink, Navigate, Outlet, useLocation } from 'react-router-dom'
 import { loadSession } from '../lib/secureProfileStore'
 
 // BookStack lives at /board on this same domain but is a separate app —
@@ -29,6 +29,7 @@ const linkClassName = ({ isActive }) =>
 function Layout() {
   const [checked, setChecked] = useState(false)
   const [hasSession, setHasSession] = useState(false)
+  const location = useLocation()
 
   useEffect(() => {
     let cancelled = false
@@ -44,7 +45,14 @@ function Layout() {
   }, [])
 
   if (!checked) return null
-  if (!hasSession) return <Navigate to="/" replace />
+  // 어디로 가려던 길이었는지 로그인 화면에 넘긴다 — 알림 메일의 링크는 일감이나
+  // 일정을 직접 가리키는데, 목적지를 버리고 보내면 로그인한 뒤 대시보드에
+  // 떨어져서 그 링크가 가리키던 것을 사용자가 다시 찾아 들어가야 했다.
+  // LoginPage가 이 값을 동일 출처 경로인지 검사한 뒤에만 따라간다.
+  if (!hasSession) {
+    const destination = location.pathname + location.search
+    return <Navigate to={`/?continue=${encodeURIComponent(destination)}`} replace />
+  }
 
   return (
     <div className="flex min-h-screen flex-col bg-white dark:bg-gray-900">
