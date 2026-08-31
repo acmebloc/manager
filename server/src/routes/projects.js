@@ -12,7 +12,7 @@ const memberSelect = {
   id: true,
   role: true,
   userId: true,
-  user: { select: { id: true, name: true, email: true, picture: true } },
+  user: { select: { id: true, name: true, email: true, picture: true, deactivatedAt: true } },
 }
 
 function decryptMember(member) {

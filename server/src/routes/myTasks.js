@@ -32,7 +32,7 @@ router.get('/', async (req, res) => {
           assigneeId: true,
           endAt: true,
           createdAt: true,
-          assignee: { select: { id: true, name: true, email: true, picture: true } },
+          assignee: { select: { id: true, name: true, email: true, picture: true, deactivatedAt: true } },
           _count: { select: { attachments: true, comments: true } },
         },
       },

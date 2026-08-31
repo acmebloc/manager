@@ -57,20 +57,55 @@ function MyPage() {
     }
   }, [navigate])
 
-  const handleWithdraw = useCallback(async () => {
-    // Also tells the server to drop the httpOnly session cookie — without
-    // this, that cookie (which is all /oidc/authorize checks) stays valid
-    // until its natural expiry, so BookStack would keep silently logging
-    // the "withdrawn" user back in even though Manager looks logged out.
+  // Clears the browser's own copies of the session and sends the user back to
+  // the login screen. Used by both 로그아웃 and 회원탈퇴 — they differ in what
+  // they ask the server to do first, not in this part.
+  const clearLocalSession = useCallback(async () => {
+    await clearSession()
+    endGoogleSession()
+    navigate('/', { replace: true })
+  }, [navigate])
+
+  // The server call drops the httpOnly cookie, which is what /oidc/authorize
+  // checks — without it that cookie stays valid until its natural expiry and
+  // BookStack keeps silently signing the user back in even though Manager
+  // looks signed out.
+  const handleLogout = useCallback(async () => {
     try {
       await fetch('/api/auth/logout', { method: 'POST' })
     } catch {
       // best-effort — still clear the local session below even if this fails
     }
-    await clearSession()
-    endGoogleSession()
-    navigate('/', { replace: true })
-  }, [navigate])
+    await clearLocalSession()
+  }, [clearLocalSession])
+
+  const handleWithdraw = useCallback(async () => {
+    const confirmed = window.confirm(
+      '회원정보가 삭제되며 참여 중인 모든 프로젝트에서 제외됩니다.\n' +
+        '작성한 글과 배정된 일감은 비활성 상태로 남습니다.\n\n' +
+        '탈퇴하시겠습니까?',
+    )
+    if (!confirmed) return
+
+    try {
+      const res = await fetch('/api/me', {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${session.token}` },
+      })
+      if (!res.ok) {
+        // 유일한 PM인 프로젝트가 있으면 409 — 어느 프로젝트인지 알려줘야
+        // 사용자가 PM을 넘기고 다시 시도할 수 있다.
+        const payload = await res.json().catch(() => null)
+        setError(payload?.error || '탈퇴에 실패했어요. 다시 시도해주세요.')
+        return
+      }
+    } catch {
+      setError('탈퇴에 실패했어요. 다시 시도해주세요.')
+      return
+    }
+
+    await clearLocalSession()
+  }, [session, clearLocalSession])
 
   const startEditName = () => {
     setNameDraft(session.profile.name)
@@ -222,13 +257,22 @@ function MyPage() {
         </button>
       </div>
 
-      <button
-        type="button"
-        onClick={handleWithdraw}
-        className="rounded-md border border-red-200 px-4 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950"
-      >
-        회원탈퇴
-      </button>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="rounded-md border border-gray-300 px-4 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+        >
+          로그아웃
+        </button>
+        <button
+          type="button"
+          onClick={handleWithdraw}
+          className="rounded-md border border-red-200 px-4 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950"
+        >
+          회원탈퇴
+        </button>
+      </div>
 
       {toast && <Toast key={toast.id} message={toast.message} onDone={() => setToast(null)} />}
     </div>

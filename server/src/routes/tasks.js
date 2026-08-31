@@ -16,7 +16,7 @@ import { deleteAttachmentFiles } from '../lib/uploads.js'
 // Mounted at /api/projects/:projectId/tasks — every task belongs to a project.
 const router = Router({ mergeParams: true })
 
-const userSelect = { id: true, name: true, email: true, picture: true }
+const userSelect = { id: true, name: true, email: true, picture: true, deactivatedAt: true }
 
 const taskInclude = {
   assignee: { select: userSelect },

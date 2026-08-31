@@ -22,6 +22,15 @@ model User {
   // (server/src/lib/notificationPrefs.js). 발송 여부만 제어할 뿐, 발송 수단
   // 자체(docs/email-notifications-spec.md)와는 무관.
   emailNotificationsEnabled Boolean @default(true)
+  // 탈퇴 시각. 행을 지우는 대신 이걸 찍고 name/email/picture를 실제로 비운다 —
+  // 프로젝트 생성자/일정 소유자/댓글 작성자 FK가 전부 RESTRICT라 행 삭제는
+  // 애초에 불가능하고, 가능하더라도 일감의 등록자·담당자가 SET NULL로 날아가
+  // "탈퇴해도 작성물은 남긴다"는 요구와 어긋난다.
+  //
+  // googleSub는 일부러 남긴다. 로그인이 이메일이 아니라 googleSub로 사람을
+  // 찾으므로(auth.js), 같은 구글 계정으로 재가입하면 이 행을 그대로 다시 찾아
+  // 활성화되고 예전 작성물의 작성자·담당자가 함께 되살아난다.
+  deactivatedAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

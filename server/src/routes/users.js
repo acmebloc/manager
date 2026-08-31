@@ -13,8 +13,12 @@ const router = Router()
 // every time and SQL can't match on it. Fine at company headcount; if the
 // directory ever gets large this needs a searchable hash column instead.
 router.get('/', async (req, res) => {
+  // 탈퇴한 사람은 목록에서 제외 — 이 디렉터리는 멤버 초대·담당자 지정·멘션
+  // 피커의 후보 목록이라, 탈퇴자가 뜨면 다시 배정할 수 있게 돼버린다. 이미
+  // 배정돼 있던 건은 그대로 두고 "비활성화된 사용자"로 보인다(§decryptUser).
   const users = await prisma.user.findMany({
-    select: { id: true, name: true, email: true, picture: true },
+    where: { deactivatedAt: null },
+    select: { id: true, name: true, email: true, picture: true, deactivatedAt: true },
   })
 
   const decrypted = users.map(decryptUser)

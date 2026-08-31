@@ -35,14 +35,35 @@ export function decryptField(stored) {
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8')
 }
 
+// 탈퇴한 사용자가 화면에 표시될 때 쓰는 이름. 탈퇴하면 name 자체가 DB에서
+// 비워지므로(routes/me.js의 DELETE), 되살릴 이름이 없어 여기서 채워준다.
+export const DEACTIVATED_USER_NAME = '비활성화된 사용자'
+
 // Decrypts whichever of email/name/picture are present on the given user-ish
 // object (works for a full User row or a partial `select` like {name, picture}).
+//
+// 사용자 정보가 클라이언트로 나가는 길목은 전부 이 함수를 지나므로(라우트
+// 14곳), 탈퇴 사용자 표시도 각 라우트가 아니라 여기서 한 번에 처리한다.
+// 단 그러려면 각 select에 deactivatedAt이 포함돼 있어야 한다 — 빠져 있으면
+// 탈퇴 여부를 알 수 없어 빈 이름이 그대로 나간다.
 export function decryptUser(user) {
   if (!user) return user
+
+  if (user.deactivatedAt) {
+    return {
+      ...user,
+      ...('email' in user && { email: null }),
+      ...('name' in user && { name: DEACTIVATED_USER_NAME }),
+      ...('picture' in user && { picture: null }),
+      isDeactivated: true,
+    }
+  }
+
   return {
     ...user,
     ...('email' in user && { email: decryptField(user.email) }),
     ...('name' in user && { name: decryptField(user.name) }),
     ...('picture' in user && { picture: decryptField(user.picture) }),
+    ...('deactivatedAt' in user && { isDeactivated: false }),
   }
 }

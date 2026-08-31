@@ -17,7 +17,7 @@ import { expandOccurrences } from '../lib/scheduleRecurrence.js'
 //    always carry real dates (`endAt` is required for a project schedule).
 const router = Router({ mergeParams: true })
 
-const userSelect = { id: true, name: true, email: true, picture: true }
+const userSelect = { id: true, name: true, email: true, picture: true, deactivatedAt: true }
 
 router.get('/', requireProjectRole('member'), async (req, res) => {
   const [tasks, schedules] = await Promise.all([

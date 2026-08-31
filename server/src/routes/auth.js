@@ -25,21 +25,43 @@ router.post('/login', async (req, res) => {
     return res.status(401).json({ error: 'Invalid Google ID token' })
   }
 
-  // Only fill name/picture from Google on first sign-up — a returning user
-  // may have customized them on the mypage, and those edits are the ones
-  // that should stick, not whatever Google happens to report this time.
-  const user = await prisma.user.upsert({
-    where: { googleSub: payload.sub },
-    update: {
-      email: encryptField(payload.email),
-    },
-    create: {
-      googleSub: payload.sub,
-      email: encryptField(payload.email),
-      name: encryptField(payload.name),
-      picture: encryptField(payload.picture),
-    },
-  })
+  // Three cases, which is why this isn't a single upsert:
+  //
+  // 새 가입 — Google이 준 값으로 그대로 만든다.
+  // 재로그인 — 이메일만 갱신한다. 이름/사진은 마이페이지에서 고쳤을 수 있고,
+  //   그 편집분이 남아야지 매번 Google 값으로 덮이면 안 된다.
+  // 재가입(탈퇴했던 계정) — 탈퇴 때 이름·사진을 실제로 비웠으므로 남길 편집분이
+  //   없다. Google 값으로 다시 채우고 deactivatedAt을 지워 되살린다. 같은 행을
+  //   그대로 쓰기 때문에, 이 사람이 예전에 쓴 일감·댓글의 작성자와 배정돼 있던
+  //   담당자 표시도 함께 원래대로 돌아온다.
+  const existing = await prisma.user.findUnique({ where: { googleSub: payload.sub } })
+
+  let user
+  if (!existing) {
+    user = await prisma.user.create({
+      data: {
+        googleSub: payload.sub,
+        email: encryptField(payload.email),
+        name: encryptField(payload.name),
+        picture: encryptField(payload.picture),
+      },
+    })
+  } else if (existing.deactivatedAt) {
+    user = await prisma.user.update({
+      where: { id: existing.id },
+      data: {
+        email: encryptField(payload.email),
+        name: encryptField(payload.name),
+        picture: encryptField(payload.picture),
+        deactivatedAt: null,
+      },
+    })
+  } else {
+    user = await prisma.user.update({
+      where: { id: existing.id },
+      data: { email: encryptField(payload.email) },
+    })
+  }
 
   const token = signAppToken(user)
 

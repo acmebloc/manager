@@ -9,7 +9,7 @@ import { assertDateOrder } from '../lib/taskFields.js'
 
 const router = Router()
 
-const userSelect = { id: true, name: true, email: true, picture: true }
+const userSelect = { id: true, name: true, email: true, picture: true, deactivatedAt: true }
 
 const scheduleInclude = {
   owner: { select: userSelect },

@@ -8,7 +8,7 @@ import { requireProjectRole } from '../lib/projectAccess.js'
 // Mounted at /api/projects/:projectId/comments
 const router = Router({ mergeParams: true })
 
-const userSelect = { id: true, name: true, email: true, picture: true }
+const userSelect = { id: true, name: true, email: true, picture: true, deactivatedAt: true }
 
 const commentInclude = {
   author: { select: userSelect },

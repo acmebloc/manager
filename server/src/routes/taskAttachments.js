@@ -21,7 +21,7 @@ const attachmentSelect = {
   mimeType: true,
   size: true,
   createdAt: true,
-  uploadedBy: { select: { id: true, name: true, email: true, picture: true } },
+  uploadedBy: { select: { id: true, name: true, email: true, picture: true, deactivatedAt: true } },
 }
 
 function decryptAttachment(attachment) {
