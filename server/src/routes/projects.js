@@ -188,6 +188,31 @@ router.get('/:id/members', requireProjectRole('member'), async (req, res) => {
   res.json(members.map(decryptMember))
 })
 
+// PM 지정 — 마이페이지의 "PM 넘기기" 레이어가 쓴다. 이미 멤버면 등급만
+// 올리고 아니면 새로 들이므로, 클라이언트가 "이 사람이 멤버인가"를 먼저
+// 확인한 뒤 POST/PATCH를 갈라 부를 필요가 없다(그 사이에 멤버 구성이 바뀌면
+// 갈라친 판단이 틀어지기도 한다).
+router.post('/:id/pm', requireProjectRole('pm'), async (req, res) => {
+  const { userId } = req.body
+  if (!userId) return res.status(400).json({ error: 'userId is required' })
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, deactivatedAt: true },
+  })
+  if (!user) return res.status(404).json({ error: 'User not found' })
+  if (user.deactivatedAt) return res.status(400).json({ error: '탈퇴한 사용자입니다' })
+
+  const member = await prisma.projectMember.upsert({
+    where: { projectId_userId: { projectId: req.params.id, userId } },
+    update: { role: 'pm' },
+    create: { projectId: req.params.id, userId, role: 'pm' },
+    select: memberSelect,
+  })
+  syncMemberRole(req.params.id, userId, 'add') // fire-and-forget
+  res.json(decryptMember(member))
+})
+
 router.post('/:id/members', requireProjectRole('pl'), async (req, res) => {
   const { userId, role = 'other' } = req.body
   if (!userId) return res.status(400).json({ error: 'userId is required' })

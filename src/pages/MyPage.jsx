@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import PmHandoverDialog from '../components/PmHandoverDialog'
 import Toast from '../components/Toast'
 import { endGoogleSession } from '../lib/googleAuth'
 import { resizeImageFile } from '../lib/imageUtils'
@@ -37,6 +38,8 @@ function MyPage() {
   const [nameDraft, setNameDraft] = useState('')
   const [error, setError] = useState('')
   const [toast, setToast] = useState(null)
+  // 비어있지 않으면 "PM 넘기기" 레이어가 뜬다 — 탈퇴를 막고 있는 프로젝트 목록.
+  const [solePmProjects, setSolePmProjects] = useState([])
   const fileInputRef = useRef(null)
   const navigate = useNavigate()
 
@@ -79,6 +82,33 @@ function MyPage() {
     await clearLocalSession()
   }, [clearLocalSession])
 
+  // confirm 없이 바로 호출하는 내부용 — PM을 다 넘긴 직후 재시도할 때는
+  // 사용자가 이미 한 번 확인한 상태라 다시 묻지 않는다.
+  const submitWithdraw = useCallback(async () => {
+    try {
+      const res = await fetch('/api/me', {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${session.token}` },
+      })
+      if (res.ok) {
+        await clearLocalSession()
+        return
+      }
+
+      const payload = await res.json().catch(() => null)
+      // 유일한 PM인 프로젝트가 있으면 409 — 안내만 하고 끝내지 말고, 그 자리에서
+      // 넘길 수 있게 레이어를 띄운다.
+      if (res.status === 409 && payload?.solePmProjects?.length) {
+        setSolePmProjects(payload.solePmProjects)
+        setError('')
+        return
+      }
+      setError(payload?.error || '탈퇴에 실패했어요. 다시 시도해주세요.')
+    } catch {
+      setError('탈퇴에 실패했어요. 다시 시도해주세요.')
+    }
+  }, [session, clearLocalSession])
+
   const handleWithdraw = useCallback(async () => {
     const confirmed = window.confirm(
       '회원정보가 삭제되며 참여 중인 모든 프로젝트에서 제외됩니다.\n' +
@@ -86,26 +116,8 @@ function MyPage() {
         '탈퇴하시겠습니까?',
     )
     if (!confirmed) return
-
-    try {
-      const res = await fetch('/api/me', {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${session.token}` },
-      })
-      if (!res.ok) {
-        // 유일한 PM인 프로젝트가 있으면 409 — 어느 프로젝트인지 알려줘야
-        // 사용자가 PM을 넘기고 다시 시도할 수 있다.
-        const payload = await res.json().catch(() => null)
-        setError(payload?.error || '탈퇴에 실패했어요. 다시 시도해주세요.')
-        return
-      }
-    } catch {
-      setError('탈퇴에 실패했어요. 다시 시도해주세요.')
-      return
-    }
-
-    await clearLocalSession()
-  }, [session, clearLocalSession])
+    await submitWithdraw()
+  }, [submitWithdraw])
 
   const startEditName = () => {
     setNameDraft(session.profile.name)
@@ -273,6 +285,17 @@ function MyPage() {
           회원탈퇴
         </button>
       </div>
+
+      {solePmProjects.length > 0 && (
+        <PmHandoverDialog
+          projects={solePmProjects}
+          onClose={() => setSolePmProjects([])}
+          onResolved={() => {
+            setSolePmProjects([])
+            submitWithdraw()
+          }}
+        />
+      )}
 
       {toast && <Toast key={toast.id} message={toast.message} onDone={() => setToast(null)} />}
     </div>

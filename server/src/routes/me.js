@@ -2,8 +2,15 @@ import { Router } from 'express'
 import { prisma } from '../db.js'
 import { syncMemberRole } from '../lib/bookstack.js'
 import { decryptUser, encryptField } from '../lib/fieldCrypto.js'
+import { findSolePmProjects } from '../lib/projectAccess.js'
 
 const router = Router()
+
+// 마이페이지의 "PM 넘기기" 레이어가 읽는 목록 — 탈퇴를 막고 있는 프로젝트들.
+// 탈퇴를 시도하지 않고도 미리 확인할 수 있게 별도 엔드포인트로 둔다.
+router.get('/sole-pm-projects', async (req, res) => {
+  res.json(await findSolePmProjects(req.user.id))
+})
 
 // mypage의 이미지 피커(resizeImageFile)는 항상 data URL만 보낸다 — 로그인 때
 // Google이 채워준 최초 picture(실제 외부 URL)는 auth.js가 직접 DB에 쓰기 때문에
@@ -48,26 +55,13 @@ router.delete('/', async (req, res) => {
 
   // 내가 유일한 PM인 프로젝트가 있으면 막는다 — 나가고 나면 그 프로젝트를
   // 수정·삭제하거나 멤버를 관리할 사람이 아무도 없어진다(사이트 관리자 제외).
-  const myPmProjects = await prisma.projectMember.findMany({
-    where: { userId: req.user.id, role: 'pm' },
-    select: { projectId: true, project: { select: { name: true } } },
-  })
-  if (myPmProjects.length > 0) {
-    const counts = await prisma.projectMember.groupBy({
-      by: ['projectId'],
-      where: { projectId: { in: myPmProjects.map((m) => m.projectId) }, role: 'pm' },
-      _count: { projectId: true },
+  // id까지 함께 돌려주므로, 클라이언트가 그 자리에서 PM을 넘길 수 있다.
+  const solePmOf = await findSolePmProjects(req.user.id)
+  if (solePmOf.length > 0) {
+    return res.status(409).json({
+      error: `${solePmOf.map((p) => p.name).join(', ')} 프로젝트의 유일한 PM입니다. 다른 PM을 지정한 뒤 탈퇴해주세요.`,
+      solePmProjects: solePmOf,
     })
-    const solePmOf = myPmProjects
-      .filter((m) => counts.find((c) => c.projectId === m.projectId)?._count.projectId === 1)
-      .map((m) => m.project.name)
-
-    if (solePmOf.length > 0) {
-      return res.status(409).json({
-        error: `${solePmOf.join(', ')} 프로젝트의 유일한 PM입니다. 다른 PM을 지정한 뒤 탈퇴해주세요.`,
-        solePmProjects: solePmOf,
-      })
-    }
   }
 
   const memberships = await prisma.projectMember.findMany({

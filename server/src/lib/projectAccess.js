@@ -67,6 +67,27 @@ export function requireProjectRole(minRole) {
   }
 }
 
+// Projects where this user is the only PM, so leaving would strand them with
+// nobody able to manage them. Backs both the withdrawal block (routes/me.js)
+// and the mypage dialog that resolves it by handing PM to someone else.
+export async function findSolePmProjects(userId) {
+  const mine = await prisma.projectMember.findMany({
+    where: { userId, role: 'pm' },
+    select: { projectId: true, project: { select: { id: true, name: true } } },
+  })
+  if (mine.length === 0) return []
+
+  const pmCounts = await prisma.projectMember.groupBy({
+    by: ['projectId'],
+    where: { projectId: { in: mine.map((m) => m.projectId) }, role: 'pm' },
+    _count: { projectId: true },
+  })
+
+  return mine
+    .filter((m) => pmCounts.find((c) => c.projectId === m.projectId)?._count.projectId === 1)
+    .map((m) => m.project)
+}
+
 // A project must always have someone who can manage it. Called before
 // removing a member or changing their role away from 'pm' — the site admin
 // is exempt, since they can always fix an "orphaned" project themselves.
