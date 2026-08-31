@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch } from '../lib/api'
 
@@ -46,43 +46,6 @@ function TaskStatusBar({ counts, total }) {
   )
 }
 
-// 프로젝트 수/일정 건수처럼 시각화할 형태가 마땅치 않은 순수 숫자 지표엔,
-// 대신 값이 로드될 때 0에서 목표값까지 짧게 세어 올라가는 인터랙션을 준다.
-// prefers-reduced-motion이면 애니메이션 없이 바로 최종값을 보여준다.
-function useCountUp(target, duration = 700) {
-  const [value, setValue] = useState(0)
-  const fromRef = useRef(0)
-
-  useEffect(() => {
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
-      setValue(target)
-      fromRef.current = target
-      return
-    }
-    const from = fromRef.current
-    const start = performance.now()
-    let frame
-    const tick = (now) => {
-      const progress = Math.min((now - start) / duration, 1)
-      const eased = 1 - (1 - progress) ** 3 // ease-out — 도착할수록 느려진다
-      setValue(Math.round(from + (target - from) * eased))
-      if (progress < 1) {
-        frame = requestAnimationFrame(tick)
-      } else {
-        fromRef.current = target
-      }
-    }
-    frame = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(frame)
-  }, [target, duration])
-
-  return value
-}
-
-function CountUp({ value }) {
-  return useCountUp(value).toLocaleString('ko-KR')
-}
-
 function FeatureCard({ feature }) {
   const content = (
     <>
@@ -108,7 +71,7 @@ function StatCard({ label, value, unit, children }) {
     <div className={cardClassName}>
       <p className="text-sm text-gray-500 dark:text-gray-400">{label}</p>
       <p className="mt-1 text-2xl font-semibold text-gray-900 dark:text-white">
-        <CountUp value={value} />
+        {value.toLocaleString('ko-KR')}
         {unit}
       </p>
       {children}
