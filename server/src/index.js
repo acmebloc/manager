@@ -19,6 +19,24 @@ import taskCommentsRouter from './routes/taskComments.js'
 import tasksRouter from './routes/tasks.js'
 import usersRouter from './routes/users.js'
 
+// Express 4 doesn't await route handlers, so a promise rejected inside one
+// never reaches an error handler — it surfaces here instead, and Node's
+// default for an unhandled rejection is to terminate. That means one
+// transient DB hiccup takes the whole API down and kills every other
+// in-flight request with it. The request that caused it is already lost
+// (it never gets a response), but nobody else's has to be.
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason)
+})
+
+// An uncaught exception is different: we're outside any promise chain and
+// the process state can't be reasoned about any more. Log it and let pm2
+// restart us — the one case where going down beats carrying on.
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err)
+  process.exit(1)
+})
+
 const app = express()
 
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN }))
@@ -53,6 +71,17 @@ app.use('/api/schedules', requireAuth, schedulesRouter)
 // /userinfo), since they're called by external parties (browser redirects,
 // BookStack's own server), not our SPA's Bearer-token API calls.
 app.use('/oidc', oidcRouter)
+
+// Catches whatever a route throws synchronously or hands to next(err).
+// Without it Express falls back to its own handler, which answers with the
+// stack trace whenever NODE_ENV isn't 'production' — and nothing in the
+// deploy sets NODE_ENV. Note this does not see async rejections: Express 4
+// never awaits handlers, so those go to the process listener above instead.
+app.use((err, req, res, next) => {
+  console.error('[error]', req.method, req.originalUrl, err)
+  if (res.headersSent) return next(err)
+  res.status(500).json({ error: '서버 오류가 발생했습니다' })
+})
 
 const port = process.env.PORT || 4000
 app.listen(port, () => {
