@@ -1212,7 +1212,9 @@ BS=/var/www/bookstack/app
 echo "=== 테마 파일 ==="
 sudo find $BS/themes/acmebloc -type f | sed "s|$BS/||"
 echo
-echo "=== 코어 수정이 남아 있는 파일 (User.php만 나와야 정상) ==="
+echo "=== 코어 수정이 남아 있는 파일 ==="
+echo "    (7번 app/Users/Models/User.php 와 9번 lang/ko/entities.php 두 개가 나와야 정상."
+echo "     하나만 나오면 나머지 하나가 업그레이드로 되돌아간 것 — 위 요약표 참고)"
 sudo -u bookstack git -C $BS status --porcelain
 echo
 echo "=== .env ==="
