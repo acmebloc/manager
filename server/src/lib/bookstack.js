@@ -135,17 +135,21 @@ async function updateBookstackUserRoles(bookstackUserId, mutate) {
 // 대한 동시 UPDATE를 직렬화해주므로, 둘 중 하나만 선점에 성공한다.
 const PROVISIONING_STALE_MS = 5 * 60 * 1000 // 정상 프로비저닝은 API 호출 몇 번 — 이보다 오래 걸렸으면 이전 시도가 죽은 것으로 보고 재시도를 허용한다.
 
+// 선점에 성공하면 그때 찍은 시각을, 실패하면 null을 돌려준다. 이 시각이 곧
+// "이번 호출의 소유권 증표"다 — 아래 두 종료 경로가 전부 이 값으로 조건을 걸어서,
+// 이미 남에게 넘어간 클레임을 뒤늦게 건드리지 않는다.
 async function claimProvisioning(projectId) {
   const staleBefore = new Date(Date.now() - PROVISIONING_STALE_MS)
+  const claimedAt = new Date()
   const claim = await prisma.project.updateMany({
     where: {
       id: projectId,
       bookstackShelfId: null,
       OR: [{ bookstackProvisioningStartedAt: null }, { bookstackProvisioningStartedAt: { lt: staleBefore } }],
     },
-    data: { bookstackProvisioningStartedAt: new Date() },
+    data: { bookstackProvisioningStartedAt: claimedAt },
   })
-  return claim.count === 1
+  return claim.count === 1 ? claimedAt : null
 }
 
 // 프로젝트 생성 직후 fire-and-forget으로 호출 — 절대 await하지 않는다(호출부 응답을
@@ -162,7 +166,8 @@ async function claimProvisioning(projectId) {
 // 중"과 "지금 막 끝냄"을 구분해 사용자에게 다른 안내를 준다.
 export async function provisionProjectSpace(projectId) {
   if (!bookstackConfigured()) return { started: false }
-  if (!(await claimProvisioning(projectId))) return { started: false }
+  const claimedAt = await claimProvisioning(projectId)
+  if (!claimedAt) return { started: false }
   try {
     const project = await prisma.project.findUnique({
       where: { id: projectId },
@@ -193,8 +198,13 @@ export async function provisionProjectSpace(projectId) {
     // 프로젝트가 삭제됐으면 던지는 대신 count:0으로 조용히 알려준다. 그래야
     // 아래에서 방금 만든 BookStack 자원을 스스로 정리할 수 있다(안 하면 DB에
     // 기록될 곳이 없어져 영구 고아가 된다).
+    //
+    // bookstackProvisioningStartedAt 조건이 같은 일을 한 가지 더 해준다: 이번
+    // 호출이 5분(PROVISIONING_STALE_MS)을 넘겨서 다른 호출이 클레임을 가져갔다면
+    // 여기도 count:0이 되고, 그럼 지금 만든 자원을 스스로 치운다 — 남의 결과를
+    // 내 것으로 덮어써서 둘 중 하나를 고아로 만들지 않는다.
     const updated = await prisma.project.updateMany({
-      where: { id: projectId },
+      where: { id: projectId, bookstackProvisioningStartedAt: claimedAt },
       data: {
         bookstackShelfId: shelf.id,
         bookstackShelfSlug: shelf.slug,
@@ -218,9 +228,12 @@ export async function provisionProjectSpace(projectId) {
     return { started: true }
   } catch (err) {
     console.error('[bookstack] provisionProjectSpace failed', { projectId, error: err.message })
+    // 여기서도 내 클레임일 때만 푼다 — 조건 없이 지우면, 이번 호출이 오래
+    // 걸려서 다른 호출이 클레임을 넘겨받은 뒤에 이 catch가 그 클레임을 풀어버려
+    // 세 번째 호출까지 동시에 들어올 수 있다(그래서 공간·역할이 중복 생성된다).
     await prisma.project
-      .update({
-        where: { id: projectId },
+      .updateMany({
+        where: { id: projectId, bookstackProvisioningStartedAt: claimedAt },
         data: { bookstackSyncError: err.message, bookstackProvisioningStartedAt: null },
       })
       .catch(() => {})
