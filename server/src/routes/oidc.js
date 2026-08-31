@@ -98,6 +98,15 @@ router.get('/authorize', async (req, res) => {
     return res.redirect(loginUrl)
   }
 
+  // 만료된 코드는 교환 경로에서 400을 받고 그대로 남는다 — 아무도 지우지
+  // 않으면 테이블이 계속 자란다(schema.prisma의 모델 주석은 "교환되거나
+  // 만료되면 삭제"라고 말하는데 후자를 구현한 코드가 없었다). 여기서 쓸어담는
+  // 이유는 이 지점이 새 코드가 생기는 유일한 곳이고, 로그인 빈도가 곧 정리
+  // 빈도가 되기 때문 — 별도 스케줄러를 들일 만한 규모가 아니다.
+  await prisma.oidcAuthCode
+    .deleteMany({ where: { expiresAt: { lt: new Date() } } })
+    .catch(() => {}) // 정리 실패가 로그인을 막을 이유는 없다
+
   const code = crypto.randomBytes(32).toString('base64url')
   await prisma.oidcAuthCode.create({
     data: {

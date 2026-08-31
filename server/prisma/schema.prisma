@@ -277,7 +277,9 @@ model ScheduleFollower {
 
 // Short-lived authorization codes for our OIDC provider (used by BookStack
 // and any future service that should share the Manager login). One row per
-// in-flight login, deleted once exchanged for a token or expired.
+// in-flight login, deleted once exchanged for a token; codes that expire
+// unexchanged are swept by the next /authorize (oidc.js), since that's the
+// only place rows are created and logins are frequent enough to keep up.
 model OidcAuthCode {
   code                String   @id
   userId              String
