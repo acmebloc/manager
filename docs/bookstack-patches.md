@@ -183,7 +183,33 @@ Theme::listen(ThemeEvents::WEB_MIDDLEWARE_BEFORE, function ($request) {
     // Read the raw superglobal on purpose: EncryptCookies has already
     // blanked this out of the request object, because Manager sets it and
     // it isn't encrypted with BookStack's app key.
-    if (!empty($_COOKIE['manager_session'])) {
+    //
+    // Presence alone is not enough. Logging out and back in as someone else
+    // leaves a non-empty cookie the whole way through, so a presence check
+    // would keep this BookStack session on the *previous* user — the second
+    // person would read the board as the first. Compare the token's subject
+    // with this session's user instead.
+    //
+    // Only the subject is read, not verified: Manager holds the signing
+    // secret and already verifies it on every /api and /oidc call. All this
+    // needs to catch is a mismatch, and anything unreadable is treated as
+    // "not this user" — the safe direction, since it logs out rather than
+    // letting a session continue on an assumption.
+    $subject = null;
+    $cookie = $_COOKIE['manager_session'] ?? '';
+    if ($cookie !== '') {
+        $parts = explode('.', $cookie);
+        if (count($parts) === 3) {
+            $b64 = strtr($parts[1], '-_', '+/');
+            $b64 = str_pad($b64, intdiv(strlen($b64) + 3, 4) * 4, '=');
+            $claims = json_decode((string) base64_decode($b64, true), true);
+            if (is_array($claims) && isset($claims['sub']) && is_string($claims['sub'])) {
+                $subject = $claims['sub'];
+            }
+        }
+    }
+
+    if ($subject !== null && $subject === $user->external_auth_id) {
         return null;
     }
 
