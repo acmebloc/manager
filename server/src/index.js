@@ -2,6 +2,7 @@ import 'dotenv/config'
 import cookieParser from 'cookie-parser'
 import cors from 'cors'
 import express from 'express'
+import { assertEnv } from './lib/envCheck.js'
 import { requireAuth } from './middleware/auth.js'
 import authRouter from './routes/auth.js'
 import avatarRouter from './routes/avatar.js'
@@ -18,6 +19,10 @@ import taskAttachmentsRouter from './routes/taskAttachments.js'
 import taskCommentsRouter from './routes/taskComments.js'
 import tasksRouter from './routes/tasks.js'
 import usersRouter from './routes/users.js'
+
+// 라우트를 하나라도 세우기 전에 확인한다 — 설정이 틀렸으면 반쯤 동작하는
+// 서버로 뜨는 것보다 여기서 멈추는 편이 낫다.
+assertEnv()
 
 // Express 4 doesn't await route handlers, so a promise rejected inside one
 // never reaches an error handler — it surfaces here instead, and Node's
