@@ -5,6 +5,7 @@ import express from 'express'
 import { requireAuth } from './middleware/auth.js'
 import authRouter from './routes/auth.js'
 import avatarRouter from './routes/avatar.js'
+import dashboardRouter from './routes/dashboard.js'
 import meRouter from './routes/me.js'
 import myTasksRouter from './routes/myTasks.js'
 import oidcRouter from './routes/oidc.js'
@@ -34,6 +35,9 @@ app.use('/api/avatar', avatarRouter)
 app.use('/api/public-profile', publicProfileRouter)
 app.use('/api/me', requireAuth, meRouter)
 app.use('/api/users', requireAuth, usersRouter)
+// 홈 화면 전용 집계 — 프로젝트별 접근 제어와 무관하게 로그인한 모두에게 같은
+// 숫자를 보여준다(dashboard.js 주석 참고).
+app.use('/api/dashboard', requireAuth, dashboardRouter)
 // Cross-project view of the caller's own tasks, grouped by project. Mounted
 // before the nested task routes since it isn't scoped to one project.
 app.use('/api/my-tasks', requireAuth, myTasksRouter)

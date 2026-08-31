@@ -292,3 +292,19 @@ export async function retryProjectSpace(projectId) {
 
   return prisma.project.findUnique({ where: { id: projectId } })
 }
+
+// 홈 화면의 "게시판 문서" 통계용 — 전체 문서 수만 필요하므로 count=1로 목록
+// 자체는 최소로 받고, BookStack list 엔드포인트가 항상 함께 내려주는 total만
+// 읽는다. 다른 공개 함수들과 같은 이유로 절대 throw하지 않는다 — 게시판이
+// 잠깐 안 뜨거나 아직 연동 안 된 환경(로컬 개발 등)이어도 홈 화면 전체가
+// 막히면 안 된다.
+export async function countPublishedPages() {
+  if (!bookstackConfigured()) return 0
+  try {
+    const result = await bookstackRequest('GET', '/pages?count=1')
+    return result?.total ?? 0
+  } catch (err) {
+    console.error('[bookstack] countPublishedPages failed', { error: err.message })
+    return 0
+  }
+}
