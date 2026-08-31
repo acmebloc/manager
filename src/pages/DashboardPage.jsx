@@ -66,6 +66,31 @@ function FeatureCard({ feature }) {
   )
 }
 
+// 전체 현황 4개 박스 전용 로딩 상태 — 이 페이지에서 시간이 걸리는 건
+// /api/dashboard/stats 응답(특히 BookStack API 왕복)뿐이라, 그동안 화면
+// 전체를 그대로 비워두면(다른 페이지의 관례) 이 섹션만 갑자기 나타나면서
+// 레이아웃이 밀린다. 실제 카드와 같은 그리드·카드 셸을 그대로 써서 도착 전에도
+// 자리를 미리 잡아두고, 두 번째 자리(전체 일감)는 막대+범례 자리까지 채워
+// 로딩→완료 전환에서 그 줄 높이가 거의 그대로 유지되게 한다.
+function StatSkeletonCard({ withStatusBar }) {
+  return (
+    <div className={cardClassName}>
+      <div className="h-4 w-20 animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
+      <div className="mt-2 h-7 w-14 animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
+      {withStatusBar && (
+        <>
+          <div className="mt-2 h-2.5 animate-pulse rounded-full bg-gray-100 dark:bg-gray-700" />
+          <div className="mt-2 flex flex-wrap gap-2">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="h-4 w-14 animate-pulse rounded bg-gray-100 dark:bg-gray-700" />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 function StatCard({ label, value, unit, children }) {
   return (
     <div className={cardClassName}>
@@ -113,6 +138,14 @@ function DashboardPage() {
       <section className="mt-8">
         <h3 className="text-lg font-medium text-gray-900 dark:text-white">전체 현황</h3>
         {error && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>}
+        {!stats && !error && (
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatSkeletonCard />
+            <StatSkeletonCard withStatusBar />
+            <StatSkeletonCard />
+            <StatSkeletonCard />
+          </div>
+        )}
         {stats && (
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard label="전체 프로젝트" value={stats.projectCount} unit="개" />
