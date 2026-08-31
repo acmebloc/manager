@@ -221,7 +221,7 @@ function TasksPage() {
       {error && <p className="mb-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
       {sections.length === 0 ? (
-        <p className="py-12 text-center text-gray-500 dark:text-gray-400">속한 프로젝트가 없습니다.</p>
+        <p className="py-12 text-center text-gray-500 dark:text-gray-400">확인 가능한 일감이 없습니다.</p>
       ) : (
         sections.map((section) => (
           <ProjectBoard
