@@ -306,6 +306,7 @@ function MyPage() {
       {solePmProjects.length > 0 && (
         <PmHandoverDialog
           projects={solePmProjects}
+          currentUserId={profile.id}
           onClose={() => setSolePmProjects([])}
           onResolved={() => {
             setSolePmProjects([])

@@ -203,6 +203,17 @@ router.post('/:id/pm', requireProjectRole('pm'), async (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' })
   if (user.deactivatedAt) return res.status(400).json({ error: '탈퇴한 사용자입니다' })
 
+  // 이미 PM인 사람을 다시 지정하면 upsert가 아무것도 바꾸지 않은 채 성공한다.
+  // 마이페이지의 PM 인계 레이어는 이 성공을 보고 "넘겼다"고 판단해 다음
+  // 단계로 넘어가므로(자기 자신을 고른 경우가 대표적), 여기서 막아준다.
+  const current = await prisma.projectMember.findUnique({
+    where: { projectId_userId: { projectId: req.params.id, userId } },
+    select: { role: true },
+  })
+  if (current?.role === 'pm') {
+    return res.status(400).json({ error: '이미 이 프로젝트의 PM입니다' })
+  }
+
   const member = await prisma.projectMember.upsert({
     where: { projectId_userId: { projectId: req.params.id, userId } },
     update: { role: 'pm' },

@@ -6,7 +6,7 @@ import { Avatar, UserSearch } from './ProjectMembers'
 // 넘기게 해주는 레이어. 프로젝트마다 따로 확인 버튼을 두는 이유는, 여러 건을
 // 한 번에 적용하면 중간에 하나가 실패했을 때 어디까지 반영됐는지 알기
 //어려워서다 — 성공한 프로젝트는 목록에서 바로 빠지므로 남은 게 곧 할 일이다.
-function ProjectRow({ project, onDone }) {
+function ProjectRow({ project, excludeUserIds, onDone }) {
   const [picked, setPicked] = useState(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -43,11 +43,14 @@ function ProjectRow({ project, onDone }) {
           </span>
           <button
             type="button"
-            onClick={() => setPicked(null)}
+            onClick={() => {
+              setPicked(null)
+              setError('')
+            }}
             disabled={saving}
             className="text-xs text-gray-500 hover:text-gray-800 disabled:opacity-50 dark:text-gray-400 dark:hover:text-white"
           >
-            변경
+            취소
           </button>
           <button
             type="button"
@@ -60,7 +63,7 @@ function ProjectRow({ project, onDone }) {
         </div>
       ) : (
         <UserSearch
-          excludeUserIds={new Set()}
+          excludeUserIds={excludeUserIds}
           onPick={setPicked}
           placeholder="새 PM으로 지정할 사람 검색"
         />
@@ -71,8 +74,12 @@ function ProjectRow({ project, onDone }) {
   )
 }
 
-function PmHandoverDialog({ projects, onResolved, onClose }) {
+// currentUserId는 검색 후보에서 자기 자신을 빼기 위한 것 — 이 레이어가 뜬
+// 시점에 본인은 이미 그 프로젝트의 유일한 PM이라, 자기를 골라봐야 아무것도
+// 넘어가지 않는다(서버도 400으로 막는다).
+function PmHandoverDialog({ projects, currentUserId, onResolved, onClose }) {
   const [remaining, setRemaining] = useState(projects)
+  const excludeUserIds = new Set(currentUserId ? [currentUserId] : [])
 
   const handleDone = (projectId) => {
     const next = remaining.filter((p) => p.id !== projectId)
@@ -96,7 +103,12 @@ function PmHandoverDialog({ projects, onResolved, onClose }) {
 
         <ul className="flex max-h-80 flex-col gap-2 overflow-y-auto">
           {remaining.map((project) => (
-            <ProjectRow key={project.id} project={project} onDone={handleDone} />
+            <ProjectRow
+              key={project.id}
+              project={project}
+              excludeUserIds={excludeUserIds}
+              onDone={handleDone}
+            />
           ))}
         </ul>
 
