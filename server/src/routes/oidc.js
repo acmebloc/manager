@@ -74,6 +74,24 @@ router.get('/authorize', async (req, res) => {
     }
   }
 
+  // The cookie's signature only proves it was minted here, not that the
+  // account still exists. Withdrawal clears the cookie in the browser that
+  // asked for it (me.js) — every other browser keeps a signed cookie that
+  // stays valid for the rest of its 7 days, and without this lookup we'd
+  // keep handing out fresh board logins for an account that's gone.
+  // requireAuth does the same check for the SPA's API calls; this is the
+  // other door into the same building.
+  if (userId) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { deactivatedAt: true },
+    })
+    if (!user || user.deactivatedAt) userId = null
+  }
+
+  // Falling through to the login redirect (rather than erroring) is
+  // deliberate: a withdrawn user who signs in with Google again is
+  // reactivated by auth.js, and this request then completes on its own.
   if (!userId) {
     const resumeUrl = `/oidc/authorize?${new URLSearchParams(req.query).toString()}`
     const loginUrl = `${process.env.FRONTEND_ORIGIN}/?continue=${encodeURIComponent(resumeUrl)}`
@@ -126,6 +144,14 @@ router.post('/token', express.urlencoded({ extended: false }), async (req, res) 
     : null
   if (!authCode || authCode.expiresAt < new Date() || authCode.redirectUri !== redirect_uri) {
     return res.status(400).json({ error: 'invalid_grant' })
+  }
+
+  // Withdrawal can land in the 60 seconds between /authorize issuing this
+  // code and BookStack redeeming it. Without this the id_token would be
+  // signed for a withdrawn account, carrying a null email claim (me.js
+  // blanks the field), and BookStack would create a session from it.
+  if (authCode.user.deactivatedAt) {
+    return res.status(400).json({ error: 'invalid_grant', error_description: 'account withdrawn' })
   }
 
   // deleteMany (never throws if the row is already gone), not delete — a
@@ -191,7 +217,9 @@ router.get('/userinfo', async (req, res) => {
   try {
     const { payload } = await jose.jwtVerify(token, getPublicKeyObject(), { issuer: issuerUrl() })
     const user = await prisma.user.findUnique({ where: { id: payload.sub } })
-    if (!user) return res.status(401).json({ error: 'invalid_token' })
+    // Access tokens live an hour; withdrawal inside that hour must stop
+    // BookStack from refreshing the profile off a blanked-out record.
+    if (!user || user.deactivatedAt) return res.status(401).json({ error: 'invalid_token' })
     const decrypted = decryptUser(user)
     res.json({ sub: decrypted.id, email: decrypted.email, name: decrypted.name, picture: avatarUrl(decrypted.id) })
   } catch {
