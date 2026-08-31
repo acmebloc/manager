@@ -506,6 +506,16 @@ sudo -u manager pm2 restart manager-api
 curl -s http://localhost:4000/health
 ```
 
+**재시작 전에 환경변수부터 확인**하면 안전하다. 서버는 필수 값이 비었거나
+자리표시자면 아예 뜨지 않으므로(`server/src/lib/envCheck.js`), 미리 돌려보면
+API가 내려간 상태로 원인을 찾는 일을 피할 수 있다:
+
+```bash
+sudo -u manager bash -c 'cd /var/www/manager/app/server && node -e '\''import("dotenv/config").then(() => import("./src/lib/envCheck.js")).then(m => { m.assertEnv(); console.log("환경변수 OK — 재시작해도 안전") }).catch(e => { console.error(e.message); process.exit(1) })'\'''
+```
+
+`환경변수 OK`가 나오면 재시작해도 된다. 문제가 있으면 어떤 변수인지 그대로 알려준다.
+
 여러 명령을 이어서 할 거면 셸에 한 번만 들어가는 쪽이 편하다:
 
 ```bash
