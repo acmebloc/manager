@@ -74,11 +74,22 @@ function MyPage() {
   // checks — without it that cookie stays valid until its natural expiry and
   // BookStack keeps silently signing the user back in even though Manager
   // looks signed out.
+  //
+  // 그래서 이 요청이 실패하면 로컬 세션도 지우지 않는다. 지워버리면 Manager는
+  // 로그아웃된 것처럼 보이는데 쿠키가 남아 게시판은 계속 열려 있고, 게다가 이
+  // 버튼이 있는 화면 자체가 세션 가드에 막혀 다시 시도할 방법이 사라진다.
+  // 실패를 실패로 알리고 그 자리에 남겨두는 편이 안전하다.
   const handleLogout = useCallback(async () => {
+    let res
     try {
-      await fetch('/api/auth/logout', { method: 'POST' })
+      res = await fetch('/api/auth/logout', { method: 'POST' })
     } catch {
-      // best-effort — still clear the local session below even if this fails
+      setError('로그아웃하지 못했어요. 네트워크를 확인하고 다시 시도해주세요.')
+      return
+    }
+    if (!res.ok) {
+      setError('로그아웃하지 못했어요. 잠시 후 다시 시도해주세요.')
+      return
     }
     await clearLocalSession()
   }, [clearLocalSession])
@@ -120,6 +131,14 @@ function MyPage() {
   // 버튼을 누르면 먼저 PM 인계가 필요한지부터 확인한다 — 확인창을 띄운 뒤에
   // 막아서 되돌리게 하는 대신, 막을 일이 있으면 그것부터 처리하게 한다.
   const handleWithdraw = useCallback(async () => {
+    // 사이트 관리자는 서버가 400으로 막는다(me.js) — 확인창을 먼저 띄우면 PM
+    // 인계 때와 똑같이 "정말 탈퇴?"에 동의한 뒤에야 안 된다는 말을 듣게 된다.
+    // 서버가 여전히 최종 판단을 하고, 이건 순서만 앞당기는 것이다.
+    if (session.profile.isSiteAdmin) {
+      setError('사이트 관리자는 탈퇴할 수 없습니다. 다른 사람에게 관리자를 넘긴 뒤 시도해주세요.')
+      return
+    }
+
     let blocking
     try {
       blocking = await apiFetch('/api/me/sole-pm-projects')
@@ -134,7 +153,7 @@ function MyPage() {
       return
     }
     await confirmAndWithdraw()
-  }, [confirmAndWithdraw])
+  }, [session, confirmAndWithdraw])
 
   const startEditName = () => {
     setNameDraft(session.profile.name)
