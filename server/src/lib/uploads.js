@@ -60,6 +60,30 @@ export const taskUpload = multer({
   limits: { fileSize: MAX_ATTACHMENT_SIZE, files: 1 },
 })
 
+const EXCEL_MIME_ALLOWLIST = new Set([
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+])
+
+// .xlsx(OOXML)만 받는다 — 구버전 바이너리 .xls(BIFF/OLE2)는 exceljs가 아예 못 읽는다
+// (파싱은 "성공"하지만 시트를 0개 인식해 헷갈리는 에러로 이어진다). BIFF 파싱을
+// 지원하는 라이브러리는 npm 배포 xlsx(SheetJS) 정도뿐인데, 그건 고위험 취약점
+// (Prototype Pollution/ReDoS) 때문에 이 프로젝트에서 의도적으로 배제했다 — 사용자가
+// Excel에서 "다른 이름으로 저장 → xlsx"로 한 번 변환하는 쪽이 훨씬 안전하다.
+//
+// Excel-only, in-memory — this feeds a one-shot parse (taskImport.js), never
+// written to disk or kept as a TaskAttachment, so there's nothing to clean up.
+export const taskImportUpload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname).slice(1).toLowerCase()
+    if (ext !== 'xlsx' || !EXCEL_MIME_ALLOWLIST.has(file.mimetype)) {
+      return cb(new Error('엑셀 파일(.xlsx)만 업로드할 수 있습니다. 구버전(.xls) 파일은 Excel에서 "다른 이름으로 저장 → Excel 통합 문서(.xlsx)"로 변환한 뒤 업로드해주세요'))
+    }
+    cb(null, true)
+  },
+  limits: { fileSize: MAX_ATTACHMENT_SIZE, files: 1 },
+})
+
 export async function deleteAttachmentFile(storageKey) {
   try {
     await fs.unlink(path.join(TASK_UPLOAD_DIR, storageKey))

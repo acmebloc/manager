@@ -14,7 +14,7 @@ const EMPTY_LINKS = { parents: [], children: [], related: [] }
 const EMPTY_DRAFT = {
   title: '',
   description: '',
-  type: 'dev',
+  type: 'plan',
   grade: 'minor',
   status: 'todo',
   assigneeId: '',

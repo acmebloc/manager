@@ -140,7 +140,7 @@ model Task {
   project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   title       String
   description String?
-  type        String    @default("dev")    // plan | dev | design | qa
+  type        String    @default("plan")   // plan | dev | design | qa
   grade       String    @default("minor")  // urgent | major | minor
   status      String    @default("todo")   // todo | doing | review | done
   // 등록자. 기존 행은 프로젝트 ownerId로 backfill. null이면 UI에 "등록자 미상"으로

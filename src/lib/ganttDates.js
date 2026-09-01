@@ -4,7 +4,7 @@
 
 export const ZOOM_LEVELS = ['day', 'week', 'month']
 const PX_PER_DAY = { day: 40, week: 14, month: 5 }
-export const ROW_HEIGHT = 40
+export const ROW_HEIGHT = 34
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토']

@@ -1,3 +1,4 @@
+import ExcelJS from 'exceljs'
 import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
@@ -5,13 +6,20 @@ import { notifyAssigned } from '../lib/mailer.js'
 import { wantsEmailNotifications } from '../lib/notificationPrefs.js'
 import { requireProjectRole } from '../lib/projectAccess.js'
 import {
+  buildHeaderMap,
+  existingTaskDedupeKeys,
+  MAX_IMPORT_ROWS,
+  normalizeIsoDateCells,
+  parseImportRows,
+} from '../lib/taskImport.js'
+import {
   assertDateOrder,
   isValidTaskGrade,
   isValidTaskStatus,
   isValidTaskType,
 } from '../lib/taskFields.js'
 import { canDeleteTask, canModifyTask, taskPermissionFlags } from '../lib/taskPermissions.js'
-import { deleteAttachmentFiles } from '../lib/uploads.js'
+import { deleteAttachmentFiles, taskImportUpload } from '../lib/uploads.js'
 
 // Mounted at /api/projects/:projectId/tasks — every task belongs to a project.
 const router = Router({ mergeParams: true })
@@ -47,6 +55,23 @@ async function currentMemberIds(projectId) {
     select: { userId: true },
   })
   return new Set(members.map((m) => m.userId))
+}
+
+// 엑셀 일괄 등록의 작성자/담당자 이름 매칭 후보 목록. 탈퇴한 멤버는 실제 이름이
+// DB에서 지워져 있어(decryptUser가 대신 채우는 표시용 문구) 매칭 대상에서 뺀다.
+async function loadImportCandidateMembers(projectId) {
+  const members = await prisma.projectMember.findMany({
+    where: { projectId },
+    select: {
+      userId: true,
+      role: true,
+      createdAt: true,
+      user: { select: { name: true, deactivatedAt: true } },
+    },
+  })
+  return members
+    .filter((m) => !m.user.deactivatedAt)
+    .map((m) => ({ ...m, user: decryptUser(m.user) }))
 }
 
 // Relationships are scoped to one project (confirmed with the user) — silently
@@ -253,7 +278,7 @@ router.post('/', requireProjectRole('member'), async (req, res) => {
       projectId: req.params.projectId,
       title,
       description,
-      type: type || 'dev',
+      type: type || 'plan',
       grade: grade || 'minor',
       status: status || 'todo',
       createdById: req.user.id,
@@ -378,6 +403,107 @@ router.delete('/:id', requireProjectRole('member'), async (req, res) => {
 
   await prisma.task.delete({ where: { id: req.params.id } })
   res.status(204).end()
+})
+
+// 엑셀 업로드 → 헤더 매핑 → 파싱 결과만 반환(DB 쓰기 없음). 프로젝트 상세페이지의
+// "검수(미리보기)" 단계가 이 응답을 그대로 화면에 그린다.
+router.post('/import/preview', requireProjectRole('pm'), (req, res) => {
+  taskImportUpload.single('file')(req, res, async (err) => {
+    if (err) return res.status(400).json({ error: err.message })
+    if (!req.file) return res.status(400).json({ error: 'file is required' })
+
+    const workbook = new ExcelJS.Workbook()
+    try {
+      const buffer = await normalizeIsoDateCells(req.file.buffer)
+      await workbook.xlsx.load(buffer)
+    } catch {
+      return res.status(400).json({ error: '엑셀 파일을 읽을 수 없습니다' })
+    }
+
+    const worksheet = workbook.worksheets[0]
+    if (!worksheet) {
+      return res
+        .status(400)
+        .json({ error: '엑셀 파일에서 시트를 찾을 수 없습니다. 올바른 .xlsx 파일인지 확인해주세요' })
+    }
+
+    let headerMap
+    try {
+      headerMap = buildHeaderMap(worksheet.getRow(1))
+    } catch (headerErr) {
+      return res.status(400).json({ error: headerErr.message })
+    }
+
+    if (worksheet.lastRow && worksheet.lastRow.number - 1 > MAX_IMPORT_ROWS) {
+      return res.status(400).json({ error: `한 번에 최대 ${MAX_IMPORT_ROWS}행까지 처리할 수 있습니다` })
+    }
+
+    const members = await loadImportCandidateMembers(req.params.projectId)
+    const rows = parseImportRows(worksheet, headerMap, members)
+
+    const existingTasks = await prisma.task.findMany({
+      where: { projectId: req.params.projectId },
+      select: { title: true, startAt: true, endAt: true },
+    })
+
+    res.json({
+      rows,
+      existingTaskKeys: existingTaskDedupeKeys(existingTasks),
+      // 검수 화면의 담당자/작성자 드롭다운용 — 이름만 필요하니 role/createdAt은
+      // 뺀다(어차피 firstPm 계산은 서버가 파싱 단계에서 이미 끝냈다).
+      members: members.map((m) => ({ userId: m.userId, name: m.user.name })),
+    })
+  })
+})
+
+// 미리보기(검수 화면)에서 사용자가 체크·수정까지 마친 행 목록을 그대로 받아
+// 실제로 일감을 생성한다. 검수 화면 자체가 이미 제목 필수/날짜 순서를 막고
+// 있으므로 정상적인 사용에서는 걸릴 일이 없지만, 프리뷰와 커밋 사이에 담당자가
+// 프로젝트에서 빠졌을 수 있어 담당자만 다시 검증하고 — 문제가 있으면 그 행
+// 전체를 버리지 않고 미배정으로 낮춰 등록을 계속한다.
+router.post('/import/commit', requireProjectRole('pm'), async (req, res) => {
+  const { rows } = req.body
+  if (!Array.isArray(rows)) return res.status(400).json({ error: 'rows must be an array' })
+  if (rows.length > MAX_IMPORT_ROWS) {
+    return res.status(400).json({ error: `한 번에 최대 ${MAX_IMPORT_ROWS}행까지 처리할 수 있습니다` })
+  }
+
+  const created = []
+  const failed = []
+
+  for (const row of rows) {
+    if (!row.title) {
+      failed.push({ rowNumber: row.rowNumber, error: 'title is required' })
+      continue
+    }
+    const dateProblem = assertDateOrder(row.startAt, row.endAt)
+    if (dateProblem) {
+      failed.push({ rowNumber: row.rowNumber, error: dateProblem })
+      continue
+    }
+
+    const assigneeProblem = await assertAssigneeIsMember(req.params.projectId, row.assigneeId, null)
+    const assigneeId = assigneeProblem ? null : row.assigneeId || null
+
+    const task = await prisma.task.create({
+      data: {
+        projectId: req.params.projectId,
+        title: row.title,
+        createdById: row.createdById || null,
+        assigneeId,
+        startAt: row.startAt ? new Date(row.startAt) : null,
+        endAt: row.endAt ? new Date(row.endAt) : null,
+      },
+      include: taskInclude,
+    })
+    created.push(task)
+  }
+
+  const memberIds = await currentMemberIds(req.params.projectId)
+  res.status(201).json({
+    created: created.map((t) => decryptTask(t, memberIds, req.user, req.projectAccess)),
+    failed,
+  })
 })
 
 export default router

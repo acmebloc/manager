@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import ProjectComments from '../components/ProjectComments'
 import ProjectMembers, { MemberIdentity, membersDiff, roleLabel } from '../components/ProjectMembers'
+import TaskExcelImport from '../components/TaskExcelImport'
 
 function formatDate(value) {
   if (!value) return null
@@ -308,6 +309,12 @@ function ProjectDetailPage() {
                   >
                     {bookstackSyncing ? '공간 연동 중…' : '공간 연동'}
                   </button>
+                </>
+              )}
+              {isPm && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <TaskExcelImport projectId={id} />
                 </>
               )}
             </div>

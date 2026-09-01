@@ -19,7 +19,7 @@ function TaskCard({ task, draggable, onDragStart, onClick }) {
         draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
       }`}
     >
-      <p className="font-medium text-gray-900 dark:text-white">{task.title}</p>
+      <p className="text-xs font-medium text-gray-900 dark:text-white">{task.title}</p>
       <div className="flex flex-wrap gap-1 text-xs">
         <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-gray-600 dark:bg-gray-700 dark:text-gray-300">
           {TASK_TYPES.find((t) => t.value === task.type)?.label}

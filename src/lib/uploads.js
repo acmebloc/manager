@@ -20,3 +20,12 @@ export function isAllowedAttachmentExt(fileName) {
   const ext = fileName.split('.').pop()?.toLowerCase()
   return Boolean(ext) && ATTACHMENT_EXT_ALLOWLIST.has(ext)
 }
+
+// Excel 일괄 등록은 .xlsx만 받는다(구버전 .xls는 파싱 라이브러리가 못 읽는다) —
+// mirrors server/src/lib/uploads.js's taskImportUpload fileFilter.
+const EXCEL_EXT_ALLOWLIST = new Set(['xlsx'])
+
+export function isAllowedExcelExt(fileName) {
+  const ext = fileName.split('.').pop()?.toLowerCase()
+  return Boolean(ext) && EXCEL_EXT_ALLOWLIST.has(ext)
+}

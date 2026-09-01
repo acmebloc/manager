@@ -166,7 +166,7 @@ function GanttChart({
             {rows.map((row) => (
               <div key={row.key} className="flex border-b border-gray-100 last:border-b-0 dark:border-gray-800">
                 <div
-                  className="sticky left-0 z-[2] w-[200px] shrink-0 truncate border-r border-gray-200 bg-white px-3 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+                  className="sticky left-0 z-[2] w-[200px] shrink-0 truncate border-r border-gray-200 bg-white px-3 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
                   style={{ height: ROW_HEIGHT, lineHeight: `${ROW_HEIGHT}px` }}
                   title={row.title}
                 >
@@ -181,7 +181,7 @@ function GanttChart({
                         type="button"
                         onClick={() => onBarClick(bar)}
                         title={barTitleFor(bar)}
-                        className={`absolute top-1.5 truncate rounded px-2 text-left text-xs font-medium text-white ${barClassFor(bar)}`}
+                        className={`absolute top-1.5 truncate rounded px-2 text-left text-[11px] font-medium text-white ${barClassFor(bar)}`}
                         style={{ left: geometry.left, width: Math.max(geometry.width, 8), height: ROW_HEIGHT - 12 }}
                       >
                         {bar.title}
