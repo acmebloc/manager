@@ -51,10 +51,10 @@ function SchedulePage() {
   if (loading) return null
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId)
-  // 선택 레이어 안 목록만 생성순(오름차순)으로 보여준다 — 기본 선택은 그대로
-  // 최신 프로젝트 우선(projects[0], /api/projects가 createdAt desc로 내려줌)
-  // 이라 목록 표시 순서와 기본 선택 로직을 서로 분리해뒀다.
-  const projectsByCreatedAt = [...projects].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+  // 선택 레이어 안 목록도 최신 생성순(내림차순)으로 — 기본 선택(projects[0])과
+  // 같은 기준이라 사실상 /api/projects가 내려주는 순서 그대로지만, API 정렬에
+  // 암묵적으로 기대지 않도록 여기서 명시적으로 한 번 더 정렬해둔다.
+  const projectsByCreatedAt = [...projects].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
 
   return (
     <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-8 px-4 py-8">
