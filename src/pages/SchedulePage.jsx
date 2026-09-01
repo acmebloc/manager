@@ -69,7 +69,7 @@ function SchedulePage() {
               className="flex items-center gap-1 text-base font-medium text-gray-900 dark:text-white"
             >
               {selectedProject?.name}
-              <span className="text-gray-400 dark:text-gray-500">▾</span>
+              <span className="text-[#000000]">▾</span>
             </button>
             {pickerOpen && (
               <ul className="absolute z-10 mt-1 min-w-[200px] rounded-md border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-800">
