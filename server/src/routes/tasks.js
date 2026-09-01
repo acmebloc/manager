@@ -485,18 +485,30 @@ router.post('/import/commit', requireProjectRole('pm'), async (req, res) => {
     const assigneeProblem = await assertAssigneeIsMember(req.params.projectId, row.assigneeId, null)
     const assigneeId = assigneeProblem ? null : row.assigneeId || null
 
-    const task = await prisma.task.create({
-      data: {
-        projectId: req.params.projectId,
-        title: row.title,
-        createdById: row.createdById || null,
-        assigneeId,
-        startAt: row.startAt ? new Date(row.startAt) : null,
-        endAt: row.endAt ? new Date(row.endAt) : null,
-      },
-      include: taskInclude,
-    })
-    created.push(task)
+    // createdById는 assigneeId와 달리 프로젝트 멤버 여부를 다시 검증하지 않고
+    // 그대로 저장한다(작성자는 FK만 유효하면 되고, 프로젝트 멤버일 필요는
+    // 없다 — 검수 화면의 드롭다운도 항상 유효한 멤버 id만 보내지만, 이 API를
+    // 직접 호출하는 경우까지 대비해 존재하지 않는 id면 여기서 막는다). create가
+    // FK 제약 위반 등으로 reject되면(Express 4는 이 라우트를 await하지 않아
+    // 잡지 않은 reject가 요청을 응답 없이 그대로 멈춰버린다 — index.js의
+    // unhandledRejection 핸들러는 로그만 남기지 응답을 대신 보내주지 않는다)
+    // 그 행만 실패 처리하고 나머지 행 등록은 계속 진행한다.
+    try {
+      const task = await prisma.task.create({
+        data: {
+          projectId: req.params.projectId,
+          title: row.title,
+          createdById: row.createdById || null,
+          assigneeId,
+          startAt: row.startAt ? new Date(row.startAt) : null,
+          endAt: row.endAt ? new Date(row.endAt) : null,
+        },
+        include: taskInclude,
+      })
+      created.push(task)
+    } catch (err) {
+      failed.push({ rowNumber: row.rowNumber, error: err.message })
+    }
   }
 
   const memberIds = await currentMemberIds(req.params.projectId)

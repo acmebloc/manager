@@ -20,10 +20,16 @@ function dedupeKey(title, startAt, endAt) {
   return `${title.trim()} ${startAt} ${endAt}`
 }
 
+function isTitleMissing(row) {
+  return !row.title.trim()
+}
+
+function isDateOrderInvalid(row) {
+  return Boolean(row.startAt && row.endAt && row.startAt > row.endAt)
+}
+
 function isRowValid(row) {
-  if (!row.title.trim()) return false
-  if (row.startAt && row.endAt && row.startAt > row.endAt) return false
-  return true
+  return !isTitleMissing(row) && !isDateOrderInvalid(row)
 }
 
 function isRowEdited(row) {
@@ -204,6 +210,7 @@ function TaskExcelImport({ projectId, onImported }) {
     setError('')
     try {
       const payload = checkedRows.map((row) => ({
+        rowNumber: row.rowNumber,
         title: row.title,
         startAt: row.startAt,
         endAt: row.endAt,
@@ -214,9 +221,16 @@ function TaskExcelImport({ projectId, onImported }) {
       setRows(null)
       onImported?.()
       // 등록 결과는 화면에 계속 남기지 않고, 사용자가 확인 버튼을 눌러야 닫히는
-      // 알럿으로 확실히 인지시킨다.
+      // 알럿으로 확실히 인지시킨다. 실패가 있으면 몇 건인지뿐 아니라 어느 행이
+      // 왜 실패했는지도 같이 보여준다 — rowNumber를 payload에 실어 보내야 서버가
+      // failed[]에 그 값을 그대로 되돌려줄 수 있다.
+      const failedDetail = data.failed
+        .map((f) => `${f.rowNumber ?? '?'}행: ${f.error}`)
+        .join('\n')
       window.alert(
-        `${data.created.length}건 등록되었습니다${data.failed.length > 0 ? ` (실패 ${data.failed.length}건)` : ''}`,
+        `${data.created.length}건 등록되었습니다${
+          data.failed.length > 0 ? `\n\n실패 ${data.failed.length}건\n${failedDetail}` : ''
+        }`,
       )
     } catch (err) {
       setError(err.message)
@@ -281,8 +295,8 @@ function TaskExcelImport({ projectId, onImported }) {
                     const edited = isRowEdited(row)
                     const assigneeTouched = row.assigneeId !== row.original.assigneeId
                     const createdByTouched = row.createdById !== row.original.createdById
-                    const dateOrderInvalid = Boolean(row.startAt && row.endAt && row.startAt > row.endAt)
-                    const titleMissing = !row.title.trim()
+                    const dateOrderInvalid = isDateOrderInvalid(row)
+                    const titleMissing = isTitleMissing(row)
 
                     return (
                       <tr

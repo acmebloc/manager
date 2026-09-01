@@ -32,7 +32,9 @@ export async function normalizeIsoDateCells(buffer) {
   let changed = false
   for (const name of sheetFiles) {
     const xml = await zip.file(name).async('string')
-    const rewritten = xml.replace(/(<c\b[^>]*\bt="d"[^>]*>)<v>([^<]+)<\/v>/g, (match, openTag, isoText) => {
+    // t="d" 셀이 수식 결과인 경우 <v> 앞에 <f>...</f>가 먼저 온다 — 그것도
+    // 건너뛰고 매칭해야 그런 셀도 정규화된다.
+    const rewritten = xml.replace(/(<c\b[^>]*\bt="d"[^>]*>)(?:<f[^>]*>[\s\S]*?<\/f>)?<v>([^<]+)<\/v>/g, (match, openTag, isoText) => {
       const date = new Date(isoText)
       if (Number.isNaN(date.getTime())) return match
       changed = true
@@ -54,13 +56,17 @@ const HEADER_SYNONYMS = {
 }
 
 // exceljs 셀 값은 문자열/숫자/Date/서식 객체({richText, formula 결과 등})로 들어올
-// 수 있어, 어떤 형태든 사람이 입력한 텍스트로 환원한다.
+// 수 있어, 어떤 형태든 사람이 입력한 텍스트로 환원한다. 수식이 #DIV/0! 같은
+// 에러로 끝나면 result가 {error: '...'} 객체라 richText/result/text 중 어느
+// 것도 못 찾고 String(value)까지 떨어지는데, 일반 객체의 String()은 그냥
+// "[object Object]"라 이 값이 그대로 제목 등에 들어갈 뻔했다 — 빈 값으로 취급.
 function cellText(value) {
   if (value == null) return ''
   if (value instanceof Date) return value.toISOString()
   if (typeof value === 'object') {
     if (Array.isArray(value.richText)) return value.richText.map((t) => t.text).join('')
     if (value.result !== undefined) return cellText(value.result)
+    if (value.error !== undefined) return ''
     if (value.text !== undefined) return String(value.text)
   }
   return String(value)
@@ -134,6 +140,10 @@ export function parseImportRows(worksheet, headerMap, members) {
 
   for (let rowNumber = 2; rowNumber <= lastRowNumber; rowNumber += 1) {
     const row = worksheet.getRow(rowNumber)
+    // actualCellCount === 0은 "셀을 한 번도 건드린 적 없는" 행만 걸러낸다 —
+    // 수식이 빈 문자열로 계산되거나 입력 후 지워진 셀은 값이 ''인 채로
+    // 여전히 "존재하는" 셀(ValueType.String)이라 여기 안 걸린다. 그래서 매핑된
+    // 5개 열을 실제로 다 읽어본 뒤에도 전부 비어 있을 때만 건너뛴다.
     if (row.actualCellCount === 0) continue
 
     const titleText = cellText(row.getCell(headerMap.title).value).trim()
@@ -143,6 +153,12 @@ export function parseImportRows(worksheet, headerMap, members) {
     const endAt = headerMap.endAt ? parseDateCell(row.getCell(headerMap.endAt).value) : null
 
     const assigneeCell = headerMap.assignee ? row.getCell(headerMap.assignee).value : null
+    const assigneeText = cellText(assigneeCell).trim()
+    const createdByCell = headerMap.createdBy ? row.getCell(headerMap.createdBy).value : null
+    const createdByText = cellText(createdByCell).trim()
+
+    if (!titleText && !startAt && !endAt && !assigneeText && !createdByText) continue
+
     const assigneeResolved = resolveMemberByName(members, assigneeCell)
     if (assigneeResolved.reason === 'not_found') {
       warnings.push(`담당자 '${assigneeResolved.label}'을(를) 프로젝트 멤버에서 찾을 수 없어 미배정 처리했습니다`)
@@ -150,7 +166,6 @@ export function parseImportRows(worksheet, headerMap, members) {
       warnings.push(`담당자 '${assigneeResolved.label}'과(와) 이름이 같은 멤버가 여러 명이라 미배정 처리했습니다`)
     }
 
-    const createdByCell = headerMap.createdBy ? row.getCell(headerMap.createdBy).value : null
     let createdByResolved = resolveMemberByName(members, createdByCell)
     let createdByFallback = false
     if (createdByResolved.reason === 'empty') {
@@ -159,6 +174,7 @@ export function parseImportRows(worksheet, headerMap, members) {
         ? { userId: pm.userId, label: pm.user.name, reason: null }
         : { userId: null, label: null, reason: 'empty' }
       createdByFallback = Boolean(pm)
+      if (!pm) warnings.push('작성자가 비어 있고 이 프로젝트에는 PM이 없어 자동 배정하지 못했습니다')
     } else if (createdByResolved.reason === 'not_found') {
       warnings.push(`작성자 '${createdByResolved.label}'을(를) 프로젝트 멤버에서 찾을 수 없어 미배정 처리했습니다`)
     } else if (createdByResolved.reason === 'ambiguous') {
