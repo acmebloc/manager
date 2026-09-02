@@ -20,6 +20,11 @@ dist-ssr
 # Generated secrets (OIDC signing key, etc.)
 server/keys/
 
+# Claude Code local/personal settings (permission allowlists etc.) — not
+# meant to be shared via git. .claude/launch.json stays tracked.
+.claude/settings.json
+.claude/settings.local.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
