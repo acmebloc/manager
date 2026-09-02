@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import ProjectComments from '../components/ProjectComments'
+import ProjectExportMenu from '../components/ProjectExportMenu'
 import ProjectMembers, { MemberIdentity, membersDiff, roleLabel } from '../components/ProjectMembers'
 import TaskExcelImport from '../components/TaskExcelImport'
 
@@ -297,6 +298,8 @@ function ProjectDetailPage() {
                 label="게시판"
                 external
               />
+              <span aria-hidden="true">·</span>
+              <ProjectExportMenu projectId={id} projectName={project.name} />
               {isPm && Boolean(project.bookstackSyncError) && (
                 <>
                   <span aria-hidden="true">·</span>

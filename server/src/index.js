@@ -11,6 +11,7 @@ import meRouter from './routes/me.js'
 import myTasksRouter from './routes/myTasks.js'
 import oidcRouter from './routes/oidc.js'
 import projectCommentsRouter from './routes/projectComments.js'
+import projectExportRouter from './routes/projectExport.js'
 import projectScheduleRouter from './routes/projectSchedule.js'
 import projectsRouter from './routes/projects.js'
 import publicProfileRouter from './routes/publicProfile.js'
@@ -69,6 +70,7 @@ app.use('/api/projects/:projectId/tasks/:taskId/comments', requireAuth, taskComm
 app.use('/api/projects/:projectId/tasks', requireAuth, tasksRouter)
 app.use('/api/projects/:projectId/schedule', requireAuth, projectScheduleRouter)
 app.use('/api/projects/:projectId/comments', requireAuth, projectCommentsRouter)
+app.use('/api/projects/:projectId/export', requireAuth, projectExportRouter)
 app.use('/api/projects', requireAuth, projectsRouter)
 app.use('/api/schedules', requireAuth, schedulesRouter)
 // No requireAuth here — the OIDC endpoints authenticate themselves (session

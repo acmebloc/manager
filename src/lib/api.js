@@ -60,7 +60,10 @@ export async function apiDownload(path, suggestedName) {
   if (!session) throw new ApiError('Not signed in', 401)
 
   const res = await fetch(path, { headers: { Authorization: `Bearer ${session.token}` } })
-  if (!res.ok) throw new ApiError(`Download failed (${res.status})`, res.status)
+  if (!res.ok) {
+    const payload = await res.json().catch(() => null)
+    throw new ApiError(payload?.error || `Download failed (${res.status})`, res.status)
+  }
 
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
