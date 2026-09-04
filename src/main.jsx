@@ -18,6 +18,7 @@ import ProjectDetailPage from './pages/ProjectDetailPage.jsx'
 import ProjectFormPage from './pages/ProjectFormPage.jsx'
 import ProjectsPage from './pages/ProjectsPage.jsx'
 import SchedulePage from './pages/SchedulePage.jsx'
+import SearchResultsPage from './pages/SearchResultsPage.jsx'
 import TaskFormPage from './pages/TaskFormPage.jsx'
 import TasksPage from './pages/TasksPage.jsx'
 
@@ -35,6 +36,7 @@ createRoot(document.getElementById('root')).render(
           <Route path="/tasks/:projectId/new" element={<TaskFormPage />} />
           <Route path="/tasks/:projectId/:taskId" element={<TaskFormPage />} />
           <Route path="/schedule" element={<SchedulePage />} />
+          <Route path="/search" element={<SearchResultsPage />} />
           <Route path="/mypage" element={<MyPage />} />
         </Route>
       </Routes>

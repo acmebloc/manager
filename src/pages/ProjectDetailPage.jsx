@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import ProjectComments from '../components/ProjectComments'
 import ProjectExportMenu from '../components/ProjectExportMenu'
@@ -37,6 +37,7 @@ function ShortcutLink({ to, label, external = false }) {
 function ProjectDetailPage() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
 
   const [project, setProject] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -80,6 +81,14 @@ function ProjectDetailPage() {
       cancelled = true
     }
   }, [id])
+
+  // 검색결과의 프로젝트 댓글 항목이 `#comments`로 링크한다(TasksPage의
+  // scrollProjectId와 같은 경량 스크롤 패턴) — React Router는 클라이언트
+  // 내비게이션에서 해시로 자동 스크롤하지 않으므로 직접 처리한다.
+  useEffect(() => {
+    if (location.hash !== '#comments' || !project) return
+    document.getElementById('comments')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [location.hash, project])
 
   const savedMembers = project?.members || []
   const diff = useMemo(() => membersDiff(savedMembers, draftMembers), [savedMembers, draftMembers])
@@ -401,7 +410,7 @@ function ProjectDetailPage() {
           </section>
         </div>
 
-        <section className="border-t border-gray-100 pt-4 dark:border-gray-700">
+        <section id="comments" className="border-t border-gray-100 pt-4 dark:border-gray-700">
           <ProjectComments projectId={id} members={memberUsers} />
         </section>
       </div>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Navigate, Outlet, useLocation } from 'react-router-dom'
 import { loadSession } from '../lib/secureProfileStore'
+import NavSearchBox from './NavSearchBox'
 
 // BookStack lives at /board on this same domain but is a separate app —
 // Apache hands that path straight to it, so it needs a real browser
@@ -18,6 +19,14 @@ const MENU_ITEMS = [
 // 자르는 이유는 기준이 "7글자"라서 — 폭 기준으로 자르면 한글·영문에 따라 잘리는
 // 지점이 달라진다. 전체 이름은 title 속성으로 남긴다.
 const MAX_NAME_LENGTH = 7
+
+// 검색창은 홈/프로젝트/일감/일정 메뉴(그 하위 라우트 포함)와 검색결과
+// 페이지 자체에만 노출한다 — 마이페이지·게시판(별도 탭)에는 없음.
+const SEARCH_ENABLED_PREFIXES = ['/dashboard', '/projects', '/tasks', '/schedule', '/search']
+
+function isSearchEnabledPath(pathname) {
+  return SEARCH_ENABLED_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))
+}
 
 function truncateName(name) {
   if (typeof name !== 'string') return ''
@@ -70,6 +79,7 @@ function Layout() {
   // 있어서 같은 정보가 두 번 나온다. 게시판은 BookStack이 자기 헤더를 그리므로
   // (docs/bookstack-patches.md) 애초에 이 메뉴바를 지나지 않는다.
   const showViewer = location.pathname !== '/mypage'
+  const showSearch = isSearchEnabledPath(location.pathname)
 
   return (
     <div className="flex min-h-screen flex-col bg-white dark:bg-gray-900">
@@ -86,11 +96,18 @@ function Layout() {
           ),
         )}
 
+        {/* 남는 공간을 차지해 검색창을 메뉴와 프로필 표시 사이 가운데에 둔다 —
+            항상 렌더링해 페이지에 따라 메뉴바 폭이 흔들리지 않게 하고, 내용만
+            조건부로 넣는다. */}
+        <div className="flex flex-1 justify-center px-4">{showSearch && <NavSearchBox />}</div>
+
         {/* 지금 로그인된 계정을 알려주기만 하는 표시 — 누를 곳도, 펼쳐지는 것도
-            없다. 그래서 button이나 링크가 아니라 그냥 텍스트다.
-            오른쪽 여백 60px = 이 요소의 mr-11(44px) + nav의 px-4(16px). */}
+            없다. 그래서 button이나 링크가 아니라 그냥 텍스트다. 오른쪽 여백은
+            이 요소의 mr-11(44px) + nav의 px-4(16px). 왼쪽의 flex-1 검색창
+            자리가 이미 남는 공간을 다 차지해 오른쪽 끝에 붙으므로 별도
+            ml-auto는 필요 없다. */}
         {showViewer && (
-          <div className="ml-auto mr-11 flex items-center gap-2">
+          <div className="mr-11 flex items-center gap-2">
             <img
               src={session.profile.picture}
               alt=""
