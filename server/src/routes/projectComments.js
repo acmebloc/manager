@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
 import { notifyMention } from '../lib/mailer.js'
+import { createNotification } from '../lib/notifications.js'
 import { wantsEmailNotifications } from '../lib/notificationPrefs.js'
 import { requireProjectRole } from '../lib/projectAccess.js'
 
@@ -57,6 +58,13 @@ async function notifyNewMentions({ comment, projectId, actor, newUserIds }) {
   for (const mention of comment.mentions) {
     if (!newUserIds.has(mention.user.id) || mention.user.id === actor.id) continue
     try {
+      await createNotification({
+        userId: mention.user.id,
+        actorId: actor.id,
+        type: 'project_mention',
+        title: `${actor.name}님이 "${project.name}" 프로젝트 댓글에서 회원님을 멘션했습니다`,
+        link,
+      })
       if (!(await wantsEmailNotifications(mention.user.id))) continue
       const recipient = decryptUser(mention.user)
       notifyMention({

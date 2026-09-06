@@ -3,6 +3,7 @@ import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
 import { notifyAssigned } from '../lib/mailer.js'
+import { createNotification } from '../lib/notifications.js'
 import { wantsEmailNotifications } from '../lib/notificationPrefs.js'
 import { requireProjectRole } from '../lib/projectAccess.js'
 import {
@@ -167,16 +168,54 @@ async function notifyIfNewAssignee(task, actor, previousAssigneeId) {
   // 삼키지 않는 한 unhandled rejection이 돼 프로세스 전체가 죽는다
   // (mailer.js의 sendMail은 이미 안전하지만, 그 앞의 이 조회는 아니었다).
   try {
+    const link = `/tasks/${task.projectId}/${task.id}`
+    // 인앱 알림은 이메일 프리퍼런스와 무관하게 항상 적재한다.
+    await createNotification({
+      userId: task.assigneeId,
+      actorId: actor.id,
+      type: 'task_assigned',
+      title: `"${task.title}" 담당자로 지정되었습니다`,
+      link,
+    })
     if (!(await wantsEmailNotifications(task.assigneeId))) return
     notifyAssigned({
       to: decryptUser(task.assignee).email,
       actorName: actor.name,
       taskTitle: task.title,
-      link: `/tasks/${task.projectId}/${task.id}`,
+      link,
     })
   } catch (err) {
     console.error('[notify] notifyIfNewAssignee failed', { taskId: task.id, error: err.message })
   }
+}
+
+// 일감 필드 변경 이력(TaskActivity) 계산용. `data`는 prisma.task.update에 실제로
+// 넘기는 조건부 스프레드 객체 그대로 — 그 안에 있는 키만 "이번 요청에서 실제로
+// 바뀐 필드"다. description은 마크다운 원문이 길어질 수 있어 값 자체는 남기지
+// 않고 변경됐다는 사실만 기록한다(항상 fromValue/toValue null).
+const ACTIVITY_TRACKED_FIELDS = ['title', 'type', 'grade', 'status', 'assigneeId', 'startAt', 'endAt', 'description']
+
+function serializeActivityValue(value) {
+  if (value === null || value === undefined) return null
+  if (value instanceof Date) return value.toISOString()
+  return String(value)
+}
+
+function computeTaskActivityChanges(existing, data) {
+  const changes = []
+  for (const field of ACTIVITY_TRACKED_FIELDS) {
+    if (!(field in data)) continue
+    if (field === 'description') {
+      if (existing.description === data.description) continue
+      changes.push({ field, fromValue: null, toValue: null })
+      continue
+    }
+    const before = serializeActivityValue(existing[field])
+    const after = serializeActivityValue(data[field])
+    if (before === after) continue
+    changes.push({ field, fromValue: before, toValue: after })
+  }
+  return changes
 }
 
 router.get('/', requireProjectRole('member'), async (req, res) => {
@@ -289,6 +328,7 @@ router.post('/', requireProjectRole('member'), async (req, res) => {
     include: taskInclude,
   })
   await applyTaskLinks(req.params.projectId, task.id, { parentTaskIds, childTaskIds, relatedTaskIds })
+  await prisma.taskActivity.create({ data: { taskId: task.id, actorId: req.user.id, action: 'created' } })
   notifyIfNewAssignee(task, req.user, null)
   const memberIds = await currentMemberIds(req.params.projectId)
   res.status(201).json(decryptTask(task, memberIds, req.user, req.projectAccess))
@@ -335,21 +375,32 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
     if (problem) return res.status(400).json({ error: problem })
   }
 
+  const data = {
+    ...(title !== undefined && { title }),
+    ...(description !== undefined && { description }),
+    ...(type !== undefined && { type }),
+    ...(grade !== undefined && { grade }),
+    ...(status !== undefined && { status }),
+    ...(assigneeId !== undefined && { assigneeId: assigneeId || null }),
+    ...(startAt !== undefined && { startAt: startAt ? new Date(startAt) : null }),
+    ...(endAt !== undefined && { endAt: endAt ? new Date(endAt) : null }),
+  }
+  const activityChanges = computeTaskActivityChanges(existing, data)
+  // 마감일이 바뀌면 이전 마감 기준으로 이미 보낸 D-3 리마인더는 새 날짜에
+  // 유효하지 않다 — 다시 보낼 수 있도록 리셋.
+  if (activityChanges.some((c) => c.field === 'endAt')) data.dueReminderLastDaysLeft = null
+
   const task = await prisma.task.update({
     where: { id: req.params.id },
-    data: {
-      ...(title !== undefined && { title }),
-      ...(description !== undefined && { description }),
-      ...(type !== undefined && { type }),
-      ...(grade !== undefined && { grade }),
-      ...(status !== undefined && { status }),
-      ...(assigneeId !== undefined && { assigneeId: assigneeId || null }),
-      ...(startAt !== undefined && { startAt: startAt ? new Date(startAt) : null }),
-      ...(endAt !== undefined && { endAt: endAt ? new Date(endAt) : null }),
-    },
+    data,
     include: taskInclude,
   })
   await applyTaskLinks(req.params.projectId, task.id, { parentTaskIds, childTaskIds, relatedTaskIds })
+  if (activityChanges.length > 0) {
+    await prisma.taskActivity.createMany({
+      data: activityChanges.map((c) => ({ taskId: task.id, actorId: req.user.id, action: 'field_changed', ...c })),
+    })
+  }
   notifyIfNewAssignee(task, req.user, existing.assigneeId)
   const memberIds = await currentMemberIds(req.params.projectId)
   res.json(decryptTask(task, memberIds, req.user, req.projectAccess))
@@ -372,14 +423,23 @@ router.patch('/:id/dates', requireProjectRole('member'), async (req, res) => {
   const dateProblem = assertDateOrder(nextStartAt, nextEndAt)
   if (dateProblem) return res.status(400).json({ error: dateProblem })
 
+  const data = {
+    ...(startAt !== undefined && { startAt: startAt ? new Date(startAt) : null }),
+    ...(endAt !== undefined && { endAt: endAt ? new Date(endAt) : null }),
+  }
+  const activityChanges = computeTaskActivityChanges(existing, data)
+  if (activityChanges.some((c) => c.field === 'endAt')) data.dueReminderLastDaysLeft = null
+
   const task = await prisma.task.update({
     where: { id: req.params.id },
-    data: {
-      ...(startAt !== undefined && { startAt: startAt ? new Date(startAt) : null }),
-      ...(endAt !== undefined && { endAt: endAt ? new Date(endAt) : null }),
-    },
+    data,
     include: taskInclude,
   })
+  if (activityChanges.length > 0) {
+    await prisma.taskActivity.createMany({
+      data: activityChanges.map((c) => ({ taskId: task.id, actorId: req.user.id, action: 'field_changed', ...c })),
+    })
+  }
   const memberIds = await currentMemberIds(req.params.projectId)
   res.json(decryptTask(task, memberIds, req.user, req.projectAccess))
 })
@@ -493,8 +553,9 @@ router.post('/import/commit', requireProjectRole('pm'), async (req, res) => {
     // 잡지 않은 reject가 요청을 응답 없이 그대로 멈춰버린다 — index.js의
     // unhandledRejection 핸들러는 로그만 남기지 응답을 대신 보내주지 않는다)
     // 그 행만 실패 처리하고 나머지 행 등록은 계속 진행한다.
+    let task
     try {
-      const task = await prisma.task.create({
+      task = await prisma.task.create({
         data: {
           projectId: req.params.projectId,
           title: row.title,
@@ -505,9 +566,18 @@ router.post('/import/commit', requireProjectRole('pm'), async (req, res) => {
         },
         include: taskInclude,
       })
-      created.push(task)
     } catch (err) {
       failed.push({ rowNumber: row.rowNumber, error: err.message })
+      continue
+    }
+    created.push(task)
+    // 일감 생성 자체는 이미 성공했다 — 활동 로그 기록이 실패하더라도(위 catch와
+    // 묶여 있으면 방금 만든 일감이 "실패한 행"으로 잘못 보고된다) 그 행을
+    // failed로 되돌리지 않고 로그만 남긴다.
+    try {
+      await prisma.taskActivity.create({ data: { taskId: task.id, actorId: req.user.id, action: 'created' } })
+    } catch (err) {
+      console.error('[taskActivity] import/commit logging failed', { taskId: task.id, error: err.message })
     }
   }
 

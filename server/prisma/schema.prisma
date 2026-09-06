@@ -46,6 +46,9 @@ model User {
   schedules              Schedule[]              @relation("ScheduleOwner")
   scheduleFollowing      ScheduleFollower[]      @relation("ScheduleFollowerUser")
   oidcCodes              OidcAuthCode[]
+  taskActivities         TaskActivity[]          @relation("TaskActivityActor")
+  notifications          Notification[]          @relation("NotificationRecipient")
+  notificationsCaused    Notification[]          @relation("NotificationActor")
 }
 
 model Project {
@@ -151,6 +154,13 @@ model Task {
   assignee    User?     @relation("TaskAssignee", fields: [assigneeId], references: [id])
   startAt     DateTime?
   endAt       DateTime?
+  // 마감 D-3~D-day 리마인더 중 "마지막으로 보낸 날의 남은 일수"(dueReminderJob.js).
+  // 매일 스캔 시점의 남은 일수와 이 값이 다르면 그날 치를 아직 안 보낸 것이라
+  // 다시 보낸다 — 그래서 D-3/D-2/D-1/D-day에 한 번씩 최대 4번 보내지고, 같은
+  // 날 스캔이 두 번 돌아도(재시작 등) 중복 발송은 안 된다. endAt이 바뀌면
+  // (server/src/routes/tasks.js의 PATCH /:id, /:id/dates) 다시 null로 되돌려
+  // 새 마감일 기준으로 사이클이 처음부터 다시 돈다.
+  dueReminderLastDaysLeft Int?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -158,9 +168,49 @@ model Task {
   comments    TaskComment[]
   linksFrom   TaskLink[]       @relation("TaskLinkFrom")
   linksTo     TaskLink[]       @relation("TaskLinkTo")
+  activities  TaskActivity[]
 
   @@index([projectId, status])
   @@index([assigneeId])
+  @@index([endAt])
+}
+
+// 일감 필드 변경 이력 — 누가 언제 무엇을 바꿨는지. TaskComment와 동일한 패턴
+// (append-only, taskId cascade). description 값 자체는 저장하지 않고 변경됐다는
+// 사실만 남긴다(마크다운 원문이 길어 로그가 불필요하게 커지는 걸 막기 위해) —
+// field='description'일 때 fromValue/toValue는 항상 null.
+model TaskActivity {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  actorId   String?
+  actor     User?    @relation("TaskActivityActor", fields: [actorId], references: [id], onDelete: SetNull)
+  action    String   // created | field_changed
+  field     String?  // title | type | grade | status | assigneeId | startAt | endAt | description
+  fromValue String?
+  toValue   String?
+  createdAt DateTime @default(now())
+
+  @@index([taskId, createdAt])
+}
+
+// 인앱 알림(알림벨) — 담당자 지정/멘션/일정 참조자/마감 임박 이벤트 발생 시
+// 이메일과 별도로 항상 적재된다(이메일은 emailNotificationsEnabled로 껐다 켰다
+// 할 수 있지만, 인앱 알림은 별도 토글 없이 항상 생성됨).
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  actorId   String?
+  actor     User?     @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  type      String    // task_assigned | task_mention | project_mention | schedule_follower | task_due_soon
+  title     String
+  link      String
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
 }
 
 // 일감 간 순수 관계 표시용 — 상태 등 어떤 기능도 연동되지 않는다. 'parent'는

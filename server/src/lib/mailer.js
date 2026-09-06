@@ -63,3 +63,15 @@ export function notifyScheduleFollower({ to, actorName, scheduleTitle, link }) {
     linkLabel: '일정 보러 가기',
   })
 }
+
+// 사람이 아니라 마감 리마인더 스캔(dueReminderJob.js)이 직접 트리거하는
+// 시스템성 알림이라 actorName이 없다.
+export function notifyDueSoon({ to, projectName, taskTitle, link, daysLeft }) {
+  return notify({
+    to,
+    subject: `[Manager] "${taskTitle}" 마감일까지 ${daysLeft}일 남았습니다`,
+    heading: `"${projectName}", "${taskTitle}" 일감이 마감일까지 ${daysLeft}일 남았어요. 꼭 확인 부탁드려요.`,
+    link,
+    linkLabel: '일감 바로가기',
+  })
+}

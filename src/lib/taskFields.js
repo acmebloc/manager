@@ -20,7 +20,7 @@ export const TASK_STATUSES = [
   { value: 'done', label: '완료' },
 ]
 
-const GRADE_RANK = { urgent: 0, major: 1, minor: 2 }
+export const GRADE_RANK = { urgent: 0, major: 1, minor: 2 }
 
 export function taskTypeLabel(value) {
   return TASK_TYPES.find((t) => t.value === value)?.label || value

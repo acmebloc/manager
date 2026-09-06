@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
 import { notifyMention } from '../lib/mailer.js'
+import { createNotification } from '../lib/notifications.js'
 import { wantsEmailNotifications } from '../lib/notificationPrefs.js'
 import { requireProjectRole } from '../lib/projectAccess.js'
 
@@ -67,6 +68,13 @@ async function notifyNewMentions({ comment, task, actor, newUserIds }) {
     // 처리 중 DB 조회가 실패해도 나머지 멘션 알림을 계속 시도하고 프로세스가
     // 죽지 않도록 멘션별로 감싼다.
     try {
+      await createNotification({
+        userId: mention.user.id,
+        actorId: actor.id,
+        type: 'task_mention',
+        title: `${actor.name}님이 "${task.title}" 일감 댓글에서 회원님을 멘션했습니다`,
+        link,
+      })
       if (!(await wantsEmailNotifications(mention.user.id))) continue
       const recipient = decryptUser(mention.user)
       notifyMention({

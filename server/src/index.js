@@ -3,12 +3,14 @@ import cookieParser from 'cookie-parser'
 import cors from 'cors'
 import express from 'express'
 import { assertEnv } from './lib/envCheck.js'
+import { startDueReminderJob } from './lib/dueReminderJob.js'
 import { requireAuth } from './middleware/auth.js'
 import authRouter from './routes/auth.js'
 import avatarRouter from './routes/avatar.js'
 import dashboardRouter from './routes/dashboard.js'
 import meRouter from './routes/me.js'
 import myTasksRouter from './routes/myTasks.js'
+import notificationsRouter from './routes/notifications.js'
 import oidcRouter from './routes/oidc.js'
 import projectCommentsRouter from './routes/projectComments.js'
 import projectExportRouter from './routes/projectExport.js'
@@ -17,6 +19,7 @@ import projectsRouter from './routes/projects.js'
 import publicProfileRouter from './routes/publicProfile.js'
 import schedulesRouter from './routes/schedules.js'
 import searchRouter from './routes/search.js'
+import taskActivityRouter from './routes/taskActivity.js'
 import taskAttachmentsRouter from './routes/taskAttachments.js'
 import taskCommentsRouter from './routes/taskComments.js'
 import tasksRouter from './routes/tasks.js'
@@ -60,6 +63,7 @@ app.use('/api/avatar', avatarRouter)
 app.use('/api/public-profile', publicProfileRouter)
 app.use('/api/me', requireAuth, meRouter)
 app.use('/api/users', requireAuth, usersRouter)
+app.use('/api/notifications', requireAuth, notificationsRouter)
 // 홈 화면 전용 집계 — 프로젝트별 접근 제어와 무관하게 로그인한 모두에게 같은
 // 숫자를 보여준다(dashboard.js 주석 참고).
 app.use('/api/dashboard', requireAuth, dashboardRouter)
@@ -68,6 +72,7 @@ app.use('/api/dashboard', requireAuth, dashboardRouter)
 app.use('/api/my-tasks', requireAuth, myTasksRouter)
 app.use('/api/projects/:projectId/tasks/:taskId/attachments', requireAuth, taskAttachmentsRouter)
 app.use('/api/projects/:projectId/tasks/:taskId/comments', requireAuth, taskCommentsRouter)
+app.use('/api/projects/:projectId/tasks/:taskId/activity', requireAuth, taskActivityRouter)
 app.use('/api/projects/:projectId/tasks', requireAuth, tasksRouter)
 app.use('/api/projects/:projectId/schedule', requireAuth, projectScheduleRouter)
 app.use('/api/projects/:projectId/comments', requireAuth, projectCommentsRouter)
@@ -91,6 +96,10 @@ app.use((err, req, res, next) => {
   if (res.headersSent) return next(err)
   res.status(500).json({ error: '서버 오류가 발생했습니다' })
 })
+
+// 별도 cron 인프라 없이 이 단일 pm2 프로세스 안에서 도는 주기 작업 — 부팅 시
+// 1회 실행 후 자체 setInterval로 반복(dueReminderJob.js).
+startDueReminderJob()
 
 const port = process.env.PORT || 4000
 app.listen(port, () => {

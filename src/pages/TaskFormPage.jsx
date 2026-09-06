@@ -5,6 +5,7 @@ import { TASK_GRADES, TASK_STATUSES, TASK_TYPES } from '../lib/taskFields'
 import { Avatar } from '../components/ProjectMembers'
 import MarkdownContent from '../components/MarkdownContent'
 import MarkdownEditor from '../components/MarkdownEditor'
+import TaskActivityLog from '../components/TaskActivityLog'
 import TaskAttachments from '../components/TaskAttachments'
 import TaskComments from '../components/TaskComments'
 import TaskLinks from '../components/TaskLinks'
@@ -524,6 +525,7 @@ function TaskFormPage() {
             <TaskAttachments projectId={projectId} taskId={taskId} canModify={task.canModify} />
           </div>
           <TaskComments projectId={projectId} taskId={taskId} members={memberUsers} />
+          <TaskActivityLog projectId={projectId} taskId={taskId} />
         </>
       )}
     </div>

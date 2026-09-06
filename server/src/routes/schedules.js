@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
 import { notifyScheduleFollower } from '../lib/mailer.js'
+import { createNotification } from '../lib/notifications.js'
 import { wantsEmailNotifications } from '../lib/notificationPrefs.js'
 import { getProjectAccess } from '../lib/projectAccess.js'
 import { clampRecurrenceEndAt, expandOccurrences, isValidRecurrenceInterval } from '../lib/scheduleRecurrence.js'
@@ -94,6 +95,13 @@ async function notifyNewFollowers({ schedule, actor, newUserIds }) {
     // 한 명 처리 중 DB 조회가 실패해도 나머지 참조자 알림을 계속 시도하고
     // 프로세스가 죽지 않도록 참조자별로 감싼다.
     try {
+      await createNotification({
+        userId: follower.user.id,
+        actorId: actor.id,
+        type: 'schedule_follower',
+        title: `"${schedule.title}" 일정 참조자로 등록되었습니다`,
+        link,
+      })
       if (!(await wantsEmailNotifications(follower.user.id))) continue
       const recipient = decryptUser(follower.user)
       notifyScheduleFollower({

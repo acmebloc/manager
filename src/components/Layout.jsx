@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { NavLink, Navigate, Outlet, useLocation } from 'react-router-dom'
 import { loadSession } from '../lib/secureProfileStore'
 import NavSearchBox from './NavSearchBox'
+import NotificationBell from './NotificationBell'
 
 // BookStack lives at /board on this same domain but is a separate app —
 // Apache hands that path straight to it, so it needs a real browser
@@ -101,13 +102,15 @@ function Layout() {
             조건부로 넣는다. */}
         <div className="flex flex-1 justify-center px-4">{showSearch && <NavSearchBox />}</div>
 
+        <NotificationBell />
+
         {/* 지금 로그인된 계정을 알려주기만 하는 표시 — 누를 곳도, 펼쳐지는 것도
             없다. 그래서 button이나 링크가 아니라 그냥 텍스트다. 오른쪽 여백은
-            이 요소의 mr-11(44px) + nav의 px-4(16px). 왼쪽의 flex-1 검색창
+            이 요소의 mr-9(36px) + nav의 px-4(16px). 왼쪽의 flex-1 검색창
             자리가 이미 남는 공간을 다 차지해 오른쪽 끝에 붙으므로 별도
             ml-auto는 필요 없다. */}
         {showViewer && (
-          <div className="mr-11 flex items-center gap-2">
+          <div className="mr-9 flex items-center gap-2">
             <img
               src={session.profile.picture}
               alt=""

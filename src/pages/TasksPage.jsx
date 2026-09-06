@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { apiFetch } from '../lib/api'
 import { TASK_GRADES, TASK_STATUSES, TASK_TYPES, sortTasks } from '../lib/taskFields'
 import { Avatar } from '../components/ProjectMembers'
+import TaskTable from '../components/TaskTable'
 
 function formatDate(value) {
   if (!value) return null
@@ -151,11 +152,22 @@ function ProjectBoard({ section, onNavigateToTask, onMoveTask }) {
 
 function TasksPage() {
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const scrollProjectId = searchParams.get('projectId')
   const [sections, setSections] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  // ?view=list로 들어오면 목록이 기본으로 켜진 상태로 보이게(공유 가능한
+  // 링크) — 토글을 누를 때도 같은 파라미터를 반영해 새로고침해도 유지된다.
+  const [view, setView] = useState(searchParams.get('view') === 'list' ? 'list' : 'board')
+
+  const changeView = (next) => {
+    setView(next)
+    const nextParams = new URLSearchParams(searchParams)
+    if (next === 'list') nextParams.set('view', 'list')
+    else nextParams.delete('view')
+    setSearchParams(nextParams, { replace: true })
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -216,13 +228,39 @@ function TasksPage() {
 
   return (
     <div className="mx-auto w-full max-w-[1400px] px-4 py-8">
-      <h2 className="mb-4 text-2xl font-semibold text-gray-900 dark:text-white">일감</h2>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">일감</h2>
+        <div className="flex overflow-hidden rounded-md border border-gray-300 dark:border-gray-600">
+          <button
+            type="button"
+            onClick={() => changeView('board')}
+            className={`px-3 py-1.5 text-sm ${
+              view === 'board'
+                ? 'bg-indigo-600 text-white'
+                : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
+            }`}
+          >
+            보드
+          </button>
+          <button
+            type="button"
+            onClick={() => changeView('list')}
+            className={`px-3 py-1.5 text-sm ${
+              view === 'list'
+                ? 'bg-indigo-600 text-white'
+                : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
+            }`}
+          >
+            목록
+          </button>
+        </div>
+      </div>
 
       {error && <p className="mb-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
       {sections.length === 0 ? (
         <p className="py-12 text-center text-gray-500 dark:text-gray-400">확인 가능한 일감이 없습니다.</p>
-      ) : (
+      ) : view === 'board' ? (
         sections.map((section) => (
           <ProjectBoard
             key={section.projectId}
@@ -231,6 +269,8 @@ function TasksPage() {
             onMoveTask={onMoveTask}
           />
         ))
+      ) : (
+        <TaskTable sections={sections} onNavigateToTask={onNavigateToTask} onMoveTask={onMoveTask} />
       )}
     </div>
   )
