@@ -42,10 +42,15 @@ function TaskCard({ task, draggable, onDragStart, onClick }) {
         </span>
         {task.endAt && <span>{formatDate(task.endAt)}</span>}
       </div>
-      {(task._count?.attachments > 0 || task._count?.comments > 0) && (
+      {(task._count?.attachments > 0 || task._count?.comments > 0 || task.checklistItems?.length > 0) && (
         <div className="flex gap-2 text-xs text-gray-400 dark:text-gray-500">
           {task._count.attachments > 0 && <span>첨부 {task._count.attachments}</span>}
           {task._count.comments > 0 && <span>댓글 {task._count.comments}</span>}
+          {task.checklistItems?.length > 0 && (
+            <span>
+              체크리스트 {task.checklistItems.filter((i) => i.done).length}/{task.checklistItems.length}
+            </span>
+          )}
         </div>
       )}
     </li>
@@ -257,6 +262,11 @@ function TasksPage() {
       </div>
 
       {error && <p className="mb-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
+      {scrollProjectId && !sections.some((s) => s.projectId === scrollProjectId) && (
+        <p className="mb-4 text-sm text-amber-600 dark:text-amber-400">
+          요청한 프로젝트의 일감을 찾을 수 없어요(보관되었거나 접근 권한이 없는 프로젝트일 수 있어요).
+        </p>
+      )}
 
       {sections.length === 0 ? (
         <p className="py-12 text-center text-gray-500 dark:text-gray-400">확인 가능한 일감이 없습니다.</p>

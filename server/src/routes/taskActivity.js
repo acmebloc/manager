@@ -19,10 +19,12 @@ const FIELD_LABELS = {
   startAt: '시작일',
   endAt: '종료일',
   description: '설명',
+  parentTaskId: '상위 일감',
 }
 
-function formatFieldValue(field, value, userNameById) {
+function formatFieldValue(field, value, userNameById, taskTitleById) {
   if (field === 'assigneeId') return value ? userNameById.get(value) || '알 수 없음' : '미배정'
+  if (field === 'parentTaskId') return value ? taskTitleById.get(value) || '알 수 없음' : '없음'
   if (value === null || value === undefined) return null
   if (field === 'type') return taskTypeLabel(value)
   if (field === 'grade') return taskGradeLabel(value)
@@ -44,18 +46,30 @@ router.get('/', requireProjectRole('member'), async (req, res) => {
     include: { actor: { select: userSelect } },
   })
 
-  // 담당자 변경 이력에 등장하는 사용자 이름을 한 번에 조회 — 이미 프로젝트를
-  // 나갔거나 담당자가 아니게 된 사람도 과거 이력에는 등장할 수 있다.
+  // 담당자/상위일감 변경 이력에 등장하는 이름을 한 번에 조회 — 이미 프로젝트를
+  // 나갔거나 삭제된 대상이라도 과거 이력에는 등장할 수 있다.
   const referencedUserIds = new Set()
+  const referencedTaskIds = new Set()
   for (const a of activities) {
-    if (a.field !== 'assigneeId') continue
-    if (a.fromValue) referencedUserIds.add(a.fromValue)
-    if (a.toValue) referencedUserIds.add(a.toValue)
+    if (a.field === 'assigneeId') {
+      if (a.fromValue) referencedUserIds.add(a.fromValue)
+      if (a.toValue) referencedUserIds.add(a.toValue)
+    }
+    if (a.field === 'parentTaskId') {
+      if (a.fromValue) referencedTaskIds.add(a.fromValue)
+      if (a.toValue) referencedTaskIds.add(a.toValue)
+    }
   }
-  const referencedUsers = referencedUserIds.size
-    ? await prisma.user.findMany({ where: { id: { in: [...referencedUserIds] } }, select: userSelect })
-    : []
+  const [referencedUsers, referencedTasks] = await Promise.all([
+    referencedUserIds.size
+      ? prisma.user.findMany({ where: { id: { in: [...referencedUserIds] } }, select: userSelect })
+      : [],
+    referencedTaskIds.size
+      ? prisma.task.findMany({ where: { id: { in: [...referencedTaskIds] } }, select: { id: true, title: true } })
+      : [],
+  ])
   const userNameById = new Map(referencedUsers.map((u) => [u.id, decryptUser(u).name]))
+  const taskTitleById = new Map(referencedTasks.map((t) => [t.id, t.title]))
 
   res.json(
     activities.map((a) => ({
@@ -64,8 +78,8 @@ router.get('/', requireProjectRole('member'), async (req, res) => {
       action: a.action,
       field: a.field,
       fieldLabel: a.field ? FIELD_LABELS[a.field] || a.field : null,
-      fromLabel: a.field ? formatFieldValue(a.field, a.fromValue, userNameById) : null,
-      toLabel: a.field ? formatFieldValue(a.field, a.toValue, userNameById) : null,
+      fromLabel: a.field ? formatFieldValue(a.field, a.fromValue, userNameById, taskTitleById) : null,
+      toLabel: a.field ? formatFieldValue(a.field, a.toValue, userNameById, taskTitleById) : null,
       createdAt: a.createdAt,
     })),
   )

@@ -25,14 +25,22 @@ router.get('/stats', async (req, res) => {
   weekEnd.setDate(weekEnd.getDate() + 7)
 
   const [projectCount, publishedPageCount, tasksByStatus, schedules] = await Promise.all([
-    prisma.project.count(),
+    prisma.project.count({ where: { archivedAt: null } }),
     countPublishedPages(),
-    prisma.task.groupBy({ by: ['status'], _count: { _all: true } }),
+    // 프로젝트를 보관해도 projectCount는 바로 줄어드는데 이 숫자는 그대로면
+    // 눈에 띄게 어긋난다 — 보관된 프로젝트의 일감은 여기서도 제외한다.
+    prisma.task.groupBy({
+      by: ['status'],
+      where: { project: { archivedAt: null } },
+      _count: { _all: true },
+    }),
     // 반복 일정은 규칙만 저장되고 회차는 조회 시점에 계산되므로(scheduleRecurrence.js),
     // "이번 주" 여부도 회차를 펼쳐본 뒤에야 알 수 있다 — 이번 주 것만 골라내려고
     // 사전 필터링하기보다, 이 규모(사내 도구)에서는 무리 없는 전체 조회 후
-    // 펼쳐서 걸러내는 쪽을 택했다.
+    // 펼쳐서 걸러내는 쪽을 택했다. 개인 일정(projectId 없음)은 항상 포함, 보관된
+    // 프로젝트의 일정만 제외.
     prisma.schedule.findMany({
+      where: { OR: [{ projectId: null }, { project: { archivedAt: null } }] },
       select: { startAt: true, endAt: true, recurrenceIntervalWeeks: true, recurrenceEndAt: true, overrides: true },
     }),
   ])

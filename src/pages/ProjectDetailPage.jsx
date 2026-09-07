@@ -4,6 +4,7 @@ import { apiFetch, ApiError } from '../lib/api'
 import ProjectComments from '../components/ProjectComments'
 import ProjectExportMenu from '../components/ProjectExportMenu'
 import ProjectMembers, { MemberIdentity, membersDiff, roleLabel } from '../components/ProjectMembers'
+import ProjectWorkload from '../components/ProjectWorkload'
 import TaskExcelImport from '../components/TaskExcelImport'
 
 function formatDate(value) {
@@ -152,6 +153,23 @@ function ProjectDetailPage() {
     }
   }
 
+  // 보관은 하드 삭제(위 remove)와 별개 — 행을 지우지 않고 archivedAt만 찍어서
+  // 목록/대시보드/검색에서만 숨긴다(User.deactivatedAt과 같은 정신). 이미
+  // 멤버인 사람은 이 상세페이지에 계속 들어올 수 있다.
+  const toggleArchived = async () => {
+    const archiving = !project.archivedAt
+    if (archiving && !window.confirm('프로젝트를 보관할까요? 목록/검색에서 숨겨지고, 언제든 다시 복원할 수 있습니다.')) {
+      return
+    }
+    try {
+      const updated = await apiFetch(`/api/projects/${id}`, { method: 'PATCH', body: { archived: archiving } })
+      setProject((current) => ({ ...current, ...updated }))
+      setError('')
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   const syncBookstack = async () => {
     setBookstackSyncing(true)
     try {
@@ -288,7 +306,14 @@ function ProjectDetailPage() {
       ) : (
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">{project.name}</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">{project.name}</h2>
+              {project.archivedAt && (
+                <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+                  보관됨
+                </span>
+              )}
+            </div>
             {project.description && (
               <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">{project.description}</p>
             )}
@@ -298,9 +323,14 @@ function ProjectDetailPage() {
               </p>
             )}
             <div className="mt-2 flex flex-wrap items-center gap-2 text-gray-300 dark:text-gray-600">
-              <ShortcutLink to={`/tasks?projectId=${id}`} label="일감" />
+              {/* 보관된 프로젝트는 일감(/tasks)이 my-tasks 기반이라 아예 안 나오고,
+                  일정(/schedule)은 필터링된 목록에서 못 찾으면 엉뚱한 다른 프로젝트
+                  일정으로 조용히 대체돼버린다 — 링크 자체를 비활성화해 이 경로로
+                  들어가는 걸 막는다(직접 URL 접근은 여전히 가능, 각 페이지 쪽
+                  방어는 별도). */}
+              <ShortcutLink to={project.archivedAt ? null : `/tasks?projectId=${id}`} label="일감" />
               <span aria-hidden="true">·</span>
-              <ShortcutLink to={`/schedule?projectId=${id}`} label="일정" />
+              <ShortcutLink to={project.archivedAt ? null : `/schedule?projectId=${id}`} label="일정" />
               <span aria-hidden="true">·</span>
               <ShortcutLink
                 to={project.bookstackShelfSlug ? `/board/shelves/${project.bookstackShelfSlug}` : null}
@@ -339,6 +369,13 @@ function ProjectDetailPage() {
                 className="text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"
               >
                 수정
+              </button>
+              <button
+                type="button"
+                onClick={toggleArchived}
+                className="text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"
+              >
+                {project.archivedAt ? '복원' : '보관'}
               </button>
               <button
                 type="button"
@@ -409,6 +446,10 @@ function ProjectDetailPage() {
             )}
           </section>
         </div>
+
+        <section className="border-t border-gray-100 pt-6 dark:border-gray-700">
+          <ProjectWorkload projectId={id} pm={pm} pl={pl} otherMembers={otherMembers} />
+        </section>
 
         <section id="comments" className="border-t border-gray-100 pt-4 dark:border-gray-700">
           <ProjectComments projectId={id} members={memberUsers} />

@@ -14,7 +14,10 @@ router.get('/', async (req, res) => {
   // Same isSiteAdmin bypass as projects.js's GET / — the site admin sees
   // every project's board site-wide, membership or not.
   const projects = await prisma.project.findMany({
-    where: req.user.isSiteAdmin ? {} : { members: { some: { userId: req.user.id } } },
+    where: {
+      archivedAt: null,
+      ...(req.user.isSiteAdmin ? {} : { members: { some: { userId: req.user.id } } }),
+    },
     orderBy: { createdAt: 'desc' },
     select: {
       id: true,
@@ -34,6 +37,7 @@ router.get('/', async (req, res) => {
           createdAt: true,
           assignee: { select: { id: true, name: true, email: true, picture: true, deactivatedAt: true } },
           _count: { select: { attachments: true, comments: true } },
+          checklistItems: { select: { done: true } },
         },
       },
     },

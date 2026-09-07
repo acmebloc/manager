@@ -47,6 +47,9 @@ export async function runDueReminderScan(now = new Date()) {
       endAt: { gte: rangeStart, lte: rangeEnd },
       status: { not: 'done' },
       assigneeId: { not: null },
+      // 프로젝트가 보관되면 리마인더도 멈춘다 — 대시보드/일정 목록과 동일하게
+      // 취급(archivedAt: null 필터 없이는 보관 후에도 계속 메일이 나감).
+      project: { archivedAt: null },
     },
     select: {
       id: true,

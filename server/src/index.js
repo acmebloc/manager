@@ -21,6 +21,7 @@ import schedulesRouter from './routes/schedules.js'
 import searchRouter from './routes/search.js'
 import taskActivityRouter from './routes/taskActivity.js'
 import taskAttachmentsRouter from './routes/taskAttachments.js'
+import taskChecklistRouter from './routes/taskChecklist.js'
 import taskCommentsRouter from './routes/taskComments.js'
 import tasksRouter from './routes/tasks.js'
 import usersRouter from './routes/users.js'
@@ -73,6 +74,7 @@ app.use('/api/my-tasks', requireAuth, myTasksRouter)
 app.use('/api/projects/:projectId/tasks/:taskId/attachments', requireAuth, taskAttachmentsRouter)
 app.use('/api/projects/:projectId/tasks/:taskId/comments', requireAuth, taskCommentsRouter)
 app.use('/api/projects/:projectId/tasks/:taskId/activity', requireAuth, taskActivityRouter)
+app.use('/api/projects/:projectId/tasks/:taskId/checklist', requireAuth, taskChecklistRouter)
 app.use('/api/projects/:projectId/tasks', requireAuth, tasksRouter)
 app.use('/api/projects/:projectId/schedule', requireAuth, projectScheduleRouter)
 app.use('/api/projects/:projectId/comments', requireAuth, projectCommentsRouter)

@@ -7,10 +7,12 @@ import MarkdownContent from '../components/MarkdownContent'
 import MarkdownEditor from '../components/MarkdownEditor'
 import TaskActivityLog from '../components/TaskActivityLog'
 import TaskAttachments from '../components/TaskAttachments'
+import TaskChecklist from '../components/TaskChecklist'
 import TaskComments from '../components/TaskComments'
 import TaskLinks from '../components/TaskLinks'
+import TaskSubtasks from '../components/TaskSubtasks'
 
-const EMPTY_LINKS = { parents: [], children: [], related: [] }
+const EMPTY_LINKS = { related: [] }
 
 const EMPTY_DRAFT = {
   title: '',
@@ -21,8 +23,7 @@ const EMPTY_DRAFT = {
   assigneeId: '',
   startAt: '',
   endAt: '',
-  parentTasks: [],
-  childTasks: [],
+  parentTask: null,
   relatedTasks: [],
 }
 
@@ -35,8 +36,9 @@ function formatDate(value) {
   return new Date(value).toLocaleDateString('ko-KR')
 }
 
-// links는 마지막으로 불러오거나 저장된 부모/자식/연결일감 — 편집 중 선택을
-// 취소했을 때 되돌아갈 기준점이라 draft와 분리해서 들고 있는다(TaskFormPage 참고).
+// links는 마지막으로 불러오거나 저장된 연결일감 — 편집 중 선택을 취소했을 때
+// 되돌아갈 기준점이라 draft와 분리해서 들고 있는다(TaskFormPage 참고).
+// parentTask는 연결일감과 달리 task 자체에 실려온다(GET /:id의 taskDetailInclude).
 function draftFromTask(task, links = EMPTY_LINKS) {
   return {
     title: task.title,
@@ -47,8 +49,7 @@ function draftFromTask(task, links = EMPTY_LINKS) {
     assigneeId: task.assigneeId || '',
     startAt: toDateInputValue(task.startAt),
     endAt: toDateInputValue(task.endAt),
-    parentTasks: links.parents,
-    childTasks: links.children,
+    parentTask: task.parentTask || null,
     relatedTasks: links.related,
   }
 }
@@ -74,6 +75,7 @@ function TaskFormPage() {
   const [allTasks, setAllTasks] = useState([])
   const [task, setTask] = useState(null)
   const [links, setLinks] = useState(EMPTY_LINKS)
+  const [subtasks, setSubtasks] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [editing, setEditing] = useState(isNew)
@@ -101,6 +103,7 @@ function TaskFormPage() {
         setAllTasks(taskListData)
         if (taskData) {
           setTask(taskData)
+          setSubtasks(taskData.subtasks || [])
           setLinks(linksData)
           setDraft(draftFromTask(taskData, linksData))
         }
@@ -127,10 +130,8 @@ function TaskFormPage() {
     [allTasks, taskId],
   )
 
-  const setLinkField = (key, tasks) => {
-    const draftKey = { parents: 'parentTasks', children: 'childTasks', related: 'relatedTasks' }[key]
-    setDraft((d) => ({ ...d, [draftKey]: tasks }))
-  }
+  const setLinkField = (tasks) => setDraft((d) => ({ ...d, relatedTasks: tasks }))
+  const setParentTask = (parentTask) => setDraft((d) => ({ ...d, parentTask }))
 
   const memberUsers = useMemo(() => members.map((m) => m.user), [members])
   const mentionUsersById = useMemo(() => new Map(memberUsers.map((m) => [m.id, m])), [memberUsers])
@@ -173,11 +174,7 @@ function TaskFormPage() {
     if (dateProblem) return
     setSaving(true)
     try {
-      const newLinks = {
-        parents: draft.parentTasks,
-        children: draft.childTasks,
-        related: draft.relatedTasks,
-      }
+      const newLinks = { related: draft.relatedTasks }
       const body = {
         title: draft.title.trim(),
         description: draft.description.trim() || null,
@@ -187,8 +184,7 @@ function TaskFormPage() {
         startAt: draft.startAt || null,
         endAt: draft.endAt || null,
         ...(isNew ? {} : { status: draft.status }),
-        parentTaskIds: newLinks.parents.map((t) => t.id),
-        childTaskIds: newLinks.children.map((t) => t.id),
+        parentTaskId: draft.parentTask?.id || null,
         relatedTaskIds: newLinks.related.map((t) => t.id),
       }
       if (isNew) {
@@ -198,6 +194,9 @@ function TaskFormPage() {
         // null (isNew flips to false as soon as the URL changes, regardless
         // of whether the navigation actually remounts this component).
         setTask(created)
+        // subtasks는 건드리지 않는다 — POST 응답엔 이제 subtasks가 없다(무거워서
+        // 뺐다, 아래 참고), 그리고 방금 만든 새 일감은 어차피 하위 작업이 있을
+        // 수 없으니 초기값 []가 이미 맞다.
         setLinks(newLinks)
         setDraft(draftFromTask(created, newLinks))
         setEditing(false)
@@ -205,6 +204,9 @@ function TaskFormPage() {
       } else {
         const updated = await apiFetch(`/api/projects/${projectId}/tasks/${taskId}`, { method: 'PATCH', body })
         setTask(updated)
+        // subtasks도 마찬가지로 건드리지 않는다 — 이 저장은 "내 필드"만 바꾸고,
+        // 하위 작업 목록은 TaskSubtasks가 자식 쪽에 직접 PATCH해서 이미 로컬
+        // state로 최신 상태를 들고 있다(응답에도 이제 subtasks가 없다).
         setLinks(newLinks)
         setEditing(false)
       }
@@ -395,6 +397,26 @@ function TaskFormPage() {
             </div>
           </div>
 
+          <div className="flex flex-col gap-3">
+            <TaskSubtasks
+              projectId={projectId}
+              taskId={taskId}
+              editing={editing}
+              candidates={linkCandidates}
+              parentTask={draft.parentTask}
+              onParentChange={setParentTask}
+              subtasks={subtasks}
+              onSubtasksChange={setSubtasks}
+            />
+            <TaskLinks
+              projectId={projectId}
+              editing={editing}
+              candidates={linkCandidates}
+              related={draft.relatedTasks}
+              onChange={setLinkField}
+            />
+          </div>
+
           {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
           <div className="flex gap-2">
             <button
@@ -502,25 +524,36 @@ function TaskFormPage() {
             </div>
           </dl>
 
+          <div className="flex flex-col gap-3">
+            <TaskSubtasks
+              projectId={projectId}
+              taskId={taskId}
+              editing={editing}
+              candidates={linkCandidates}
+              parentTask={draft.parentTask}
+              onParentChange={setParentTask}
+              subtasks={subtasks}
+              onSubtasksChange={setSubtasks}
+            />
+            <TaskLinks
+              projectId={projectId}
+              editing={editing}
+              candidates={linkCandidates}
+              related={draft.relatedTasks}
+              onChange={setLinkField}
+            />
+          </div>
+
           {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
         </div>
       )}
 
-      <div className="mt-4">
-        <TaskLinks
-          projectId={projectId}
-          editing={editing}
-          candidates={linkCandidates}
-          parents={draft.parentTasks}
-          childTasks={draft.childTasks}
-          related={draft.relatedTasks}
-          onChange={setLinkField}
-        />
-      </div>
-
       {!isNew && (
         <>
           <hr className="my-4 border-gray-100 dark:border-gray-800" />
+          <div className="mb-4">
+            <TaskChecklist projectId={projectId} taskId={taskId} canModify={task.canModify} />
+          </div>
           <div className="mb-4">
             <TaskAttachments projectId={projectId} taskId={taskId} canModify={task.canModify} />
           </div>

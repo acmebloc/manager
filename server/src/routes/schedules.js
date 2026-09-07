@@ -155,11 +155,18 @@ router.get('/', async (req, res) => {
     )
   }
 
+  // 특정 프로젝트를 직접 지정해 들어온 경우(project.js의 GET /:id와 같은
+  // 원칙)는 보관 여부와 무관하게 보여준다 — 이미 멤버인 사람의 직접 접근까지
+  // 막지 않는다. projectId 없이 "내가 볼 수 있는 전체"를 조회하는 경우에만
+  // 보관된 프로젝트의 일정을 걸러낸다(개인 일정은 프로젝트가 없으니 항상 통과).
+  const archiveFilter = (pid) =>
+    pid ? { projectId: pid } : { OR: [{ projectId: null }, { project: { archivedAt: null } }] }
+
   // The site admin sees every project's schedules, not just ones they
   // belong to — same site-wide reach as the project list.
   if (req.user.isSiteAdmin) {
     const schedules = await prisma.schedule.findMany({
-      where: { ...(projectId && { projectId }) },
+      where: archiveFilter(projectId),
       orderBy: { startAt: 'asc' },
       include: scheduleInclude,
     })
@@ -172,10 +179,7 @@ router.get('/', async (req, res) => {
   }
 
   const schedules = await prisma.schedule.findMany({
-    where: {
-      ...visibleToUser(req.user.id, projectIds),
-      ...(projectId && { projectId }),
-    },
+    where: { AND: [visibleToUser(req.user.id, projectIds), archiveFilter(projectId)] },
     orderBy: { startAt: 'asc' },
     include: scheduleInclude,
   })

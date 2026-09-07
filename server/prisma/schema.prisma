@@ -69,6 +69,14 @@ model Project {
   schedules Schedule[]
   comments  ProjectComment[]
 
+  // 보관(소프트 삭제) 시각. User.deactivatedAt과 같은 정신 — 행을 지우는 대신
+  // 플래그만 찍는다. 목록류 조회(GET /api/projects, my-tasks, dashboard,
+  // search)는 기본적으로 이 값이 null인 것만 보여주고, 이미 멤버인 사람이
+  // 상세페이지에 직접 들어오는 건 막지 않는다(getProjectAccess는 이 값을
+  // 보지 않음 — "목록에서 숨김"이지 "접근 차단"이 아니다). 하드 삭제(DELETE)는
+  // 이것과 별개로 그대로 남아있다.
+  archivedAt DateTime?
+
   // BookStack 공간(Shelf) 자동 연동 — 신규 프로젝트만 대상, 실패해도 프로젝트
   // 생성 자체는 막지 않는 느슨한 결합(server/src/lib/bookstack.js). null이면
   // 아직 연동 전이거나 마지막 시도가 실패한 상태 — bookstackSyncError 참고.
@@ -161,18 +169,43 @@ model Task {
   // (server/src/routes/tasks.js의 PATCH /:id, /:id/dates) 다시 null로 되돌려
   // 새 마감일 기준으로 사이클이 처음부터 다시 돈다.
   dueReminderLastDaysLeft Int?
+  // 상위 일감(하위 작업 계층, 딱 1단계만 허용 — 서버에서 검증, DB 제약 아님).
+  // 예전엔 TaskLink(type='parent')로 표시만 하고 기능 연동이 전혀 없었는데,
+  // 이 필드가 그 자리를 대체한다(진행률 롤업 등 실제 기능이 붙는다).
+  // 상위 일감이 삭제되면 하위 일감을 통째로 지우지 않고 그냥 최상위로 풀어준다.
+  parentTaskId String?
+  parentTask   Task?     @relation("TaskHierarchy", fields: [parentTaskId], references: [id], onDelete: SetNull)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  attachments TaskAttachment[]
-  comments    TaskComment[]
-  linksFrom   TaskLink[]       @relation("TaskLinkFrom")
-  linksTo     TaskLink[]       @relation("TaskLinkTo")
-  activities  TaskActivity[]
+  attachments    TaskAttachment[]
+  comments       TaskComment[]
+  linksFrom      TaskLink[]           @relation("TaskLinkFrom")
+  linksTo        TaskLink[]           @relation("TaskLinkTo")
+  activities     TaskActivity[]
+  checklistItems TaskChecklistItem[]
+  subtasks       Task[]               @relation("TaskHierarchy")
 
   @@index([projectId, status])
   @@index([assigneeId])
   @@index([endAt])
+  @@index([parentTaskId])
+}
+
+// 일감 내부의 가벼운 체크리스트 — 서브태스크(위 parentTaskId)와는 무관한 별개
+// 기능이다. 담당자가 자기 진행상황을 잘게 쪼개 표시하는 용도라 텍스트 수정
+// 개념이 없다(추가/완료토글/삭제만) — TaskComment보다 TaskAttachment의 CRUD
+// 모양에 더 가깝다.
+model TaskChecklistItem {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  text      String
+  done      Boolean  @default(false)
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([taskId, order])
 }
 
 // 일감 필드 변경 이력 — 누가 언제 무엇을 바꿨는지. TaskComment와 동일한 패턴
@@ -213,18 +246,22 @@ model Notification {
   @@index([userId, readAt])
 }
 
-// 일감 간 순수 관계 표시용 — 상태 등 어떤 기능도 연동되지 않는다. 'parent'는
-// 방향이 있는 관계(fromTask가 자식, toTask가 부모)이고, "자식일감" 목록은 그
-// 역방향 조회일 뿐 별도 타입이 아니다. 'related'(연결일감)는 방향이 없는
-// 대칭 관계 — 어느 쪽에서 만들어도 fromTaskId/toTaskId 양쪽에서 조회된다.
-// 부모/자식/연결 모두 여러 개 허용, 같은 프로젝트 내로만 제한(코드 레벨 검증).
+// 일감 간 순수 관계 표시용 — 상태 등 어떤 기능도 연동되지 않는다. 대칭 관계라
+// 어느 쪽에서 만들어도 fromTaskId/toTaskId 양쪽에서 조회된다. 여러 개 허용,
+// 같은 프로젝트 내로만 제한(코드 레벨 검증).
+//
+// 예전엔 'parent'/'related' 두 타입이었는데, 'parent'(부모/자식 표시)는 실제
+// 기능(진행률 롤업 등)이 있는 Task.parentTaskId 계층으로 대체되고 정리됐다 —
+// 그 마이그레이션의 데이터 이관은 prisma/migrations의 관련 마이그레이션 SQL
+// 참고. 지금은 'related' 타입만 실제로 쓰인다(과거 데이터에 'parent' 값이
+// 남아있으면 안 되지만, 컬럼 자체는 임의 문자열이라 스키마 레벨 제약은 없다).
 model TaskLink {
   id         String   @id @default(cuid())
   fromTaskId String
   fromTask   Task     @relation("TaskLinkFrom", fields: [fromTaskId], references: [id], onDelete: Cascade)
   toTaskId   String
   toTask     Task     @relation("TaskLinkTo", fields: [toTaskId], references: [id], onDelete: Cascade)
-  type       String   // parent | related
+  type       String   // related (과거 parent는 마이그레이션으로 정리됨)
   createdAt  DateTime @default(now())
 
   @@unique([fromTaskId, toTaskId, type])

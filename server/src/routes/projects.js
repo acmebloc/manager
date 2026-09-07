@@ -26,10 +26,15 @@ function myRoleFor(project, user) {
 }
 
 // The site admin sees every project site-wide; everyone else only sees
-// projects they're a member of.
+// projects they're a member of. 기본은 보관되지 않은 프로젝트만 — 보관함은
+// ?archived=true로 따로 조회한다(둘을 한 목록에 섞지 않음).
 router.get('/', async (req, res) => {
+  const archived = req.query.archived === 'true'
   const projects = await prisma.project.findMany({
-    where: req.user.isSiteAdmin ? {} : { members: { some: { userId: req.user.id } } },
+    where: {
+      archivedAt: archived ? { not: null } : null,
+      ...(req.user.isSiteAdmin ? {} : { members: { some: { userId: req.user.id } } }),
+    },
     orderBy: { createdAt: 'desc' },
     include: {
       members: { select: memberSelect },
@@ -128,7 +133,7 @@ router.get('/:id', requireProjectRole('member'), async (req, res) => {
 })
 
 router.patch('/:id', requireProjectRole('pm'), async (req, res) => {
-  const { name, description, startAt, endAt } = req.body
+  const { name, description, startAt, endAt, archived } = req.body
 
   // PATCH는 부분 수정이라, 이번 요청에서 안 건드리는 쪽은 req.projectAccess에
   // 이미 실려있는 현재 값으로 채워서 순서를 검사한다(tasks.js PATCH와 동일한
@@ -146,6 +151,9 @@ router.patch('/:id', requireProjectRole('pm'), async (req, res) => {
       ...(description !== undefined && { description }),
       ...(startAt !== undefined && { startAt: startAt ? new Date(startAt) : null }),
       ...(endAt !== undefined && { endAt: endAt ? new Date(endAt) : null }),
+      // 소프트 삭제 — User.deactivatedAt과 같은 정신. 하드 삭제(DELETE)는
+      // 이것과 별개로 그대로 남아있다.
+      ...(archived !== undefined && { archivedAt: archived ? new Date() : null }),
     },
     include: { members: { select: memberSelect } },
   })

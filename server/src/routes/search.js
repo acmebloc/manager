@@ -68,8 +68,12 @@ router.get('/', async (req, res) => {
   // 전원이 대상이라 이 스코프와 별개.
   const isSiteAdmin = req.user.isSiteAdmin
   const projectIds = isSiteAdmin ? [] : await memberProjectIds(req.user.id)
-  const projectScope = isSiteAdmin ? {} : { id: { in: projectIds } }
-  const taskProjectScope = isSiteAdmin ? {} : { projectId: { in: projectIds } }
+  // 보관된 프로젝트는 검색에서 빠진다 — 프로젝트 자체뿐 아니라 그 밑의
+  // 일감/댓글/첨부파일까지 이 두 scope를 거쳐 전부 걸러진다.
+  const projectScope = isSiteAdmin ? { archivedAt: null } : { id: { in: projectIds }, archivedAt: null }
+  const taskProjectScope = isSiteAdmin
+    ? { project: { archivedAt: null } }
+    : { projectId: { in: projectIds }, project: { archivedAt: null } }
   const textContains = { contains: escapeLikePattern(q), mode: 'insensitive' }
 
   const [projects, tasks, taskComments, projectComments, schedules, attachments, users] = await Promise.all([
@@ -116,19 +120,23 @@ router.get('/', async (req, res) => {
     prisma.schedule.findMany({
       where: {
         title: textContains,
-        // schedules.js의 두 가지 가시성 규칙(전체 목록의 owner-or-project-member,
-        // personalOnly의 owner-or-follower)을 합친 것 — 검색은 두 화면 어디서든
-        // 보이는 일정을 전부 포함해야 한다. 사이트 어드민은 스케줄 GET /와
-        // 동일하게 개인 일정을 포함해 전체를 본다.
-        ...(isSiteAdmin
-          ? {}
-          : {
-              OR: [
-                { ownerId: req.user.id },
-                { projectId: { in: projectIds } },
-                { projectId: null, followers: { some: { userId: req.user.id } } },
-              ],
-            }),
+        AND: [
+          // schedules.js의 두 가지 가시성 규칙(전체 목록의 owner-or-project-member,
+          // personalOnly의 owner-or-follower)을 합친 것 — 검색은 두 화면 어디서든
+          // 보이는 일정을 전부 포함해야 한다. 사이트 어드민은 스케줄 GET /와
+          // 동일하게 개인 일정을 포함해 전체를 본다.
+          isSiteAdmin
+            ? {}
+            : {
+                OR: [
+                  { ownerId: req.user.id },
+                  { projectId: { in: projectIds } },
+                  { projectId: null, followers: { some: { userId: req.user.id } } },
+                ],
+              },
+          // 보관된 프로젝트의 일정은 제외 — 개인 일정(projectId 없음)은 대상이 아니라 항상 통과.
+          { OR: [{ projectId: null }, { project: { archivedAt: null } }] },
+        ],
       },
       select: { id: true, title: true, projectId: true, updatedAt: true, project: { select: { name: true } } },
     }),

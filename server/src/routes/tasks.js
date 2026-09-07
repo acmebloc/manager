@@ -26,11 +26,31 @@ import { deleteAttachmentFiles, taskImportUpload } from '../lib/uploads.js'
 const router = Router({ mergeParams: true })
 
 const userSelect = { id: true, name: true, email: true, picture: true, deactivatedAt: true }
+const linkTaskSelect = { id: true, title: true, type: true, grade: true, status: true }
 
 const taskInclude = {
   assignee: { select: userSelect },
   createdBy: { select: userSelect },
   _count: { select: { attachments: true, comments: true } },
+  checklistItems: { select: { done: true } },
+}
+
+// 상위 일감만 — POST/PATCH가 응답을 만들 때 쓴다. 상세페이지가 취소 시
+// draftFromTask로 되돌아갈 기준을 다시 잡으려면 parentTask는 필요하지만,
+// subtasks(하위 작업 목록 전체)는 이 두 경로에서 실제로 쓰이지 않는다 —
+// 하위 작업은 TaskSubtasks.jsx가 자식 쪽에 직접 PATCH해서 로컬 state로만
+// 관리하고, "내 필드"를 바꾸는 이 요청으로는 절대 바뀌지 않기 때문이다.
+const taskWriteInclude = {
+  ...taskInclude,
+  parentTask: { select: linkTaskSelect },
+}
+
+// GET /:id 전용 — 상위/하위 일감을 전부 보여줘야 하는 유일한 곳이라 subtasks
+// 목록 전체(무게가 있음)를 여기서만 포함한다. v1 스코프: 칸반 카드/테이블
+// 행에는 진행률 배지를 붙이지 않고, 상세페이지에서만 계층을 보여준다.
+const taskDetailInclude = {
+  ...taskWriteInclude,
+  subtasks: { select: { ...linkTaskSelect, assignee: { select: userSelect } } },
 }
 
 // The client never learns its own user id or site-admin flag (see
@@ -46,6 +66,11 @@ function decryptTask(task, memberIds, user, projectAccess) {
     // 담당자가 프로젝트에서 빠져도 assigneeId는 그대로 두되(§4.4), UI가 비활성
     // 표시를 할 수 있도록 현재 멤버 여부를 별도로 알려준다.
     assigneeIsMember: task.assigneeId ? memberIds.has(task.assigneeId) : true,
+    // GET /:id에서만 존재(taskDetailInclude) — subtasks의 assignee도 다른
+    // user 객체와 동일하게 복호화를 거쳐야 한다.
+    ...(task.subtasks && {
+      subtasks: task.subtasks.map((s) => ({ ...s, assignee: s.assignee ? decryptUser(s.assignee) : null })),
+    }),
     ...taskPermissionFlags(task, user, projectAccess),
   }
 }
@@ -90,42 +115,18 @@ async function sameProjectTaskIds(projectId, taskId, ids) {
   return found.map((t) => t.id)
 }
 
-const linkTaskSelect = { id: true, title: true, type: true, grade: true, status: true }
-
-// Purely relational — no functional coupling (confirmed with the user):
-// changing a linked task's status/fields never touches this task. 'parent'
-// is directional (fromTask is the child); "children" is just the reverse
-// query, not a separate stored type. 'related' is symmetric, so it's stored
-// once but read from either side.
+// Purely relational — no functional coupling: changing a linked task's
+// status/fields never touches this task. Symmetric, so it's stored once but
+// read from either side. (부모/자식 표시는 예전에 이 테이블의 'parent' 타입이었지만
+// 실제 기능이 있는 Task.parentTaskId 계층으로 대체됐다 — 이제 이 함수는 'related'만
+// 다룬다.)
 //
-// Each type's delete+recreate pair runs inside one transaction so a save
-// never leaves that type's links in a transiently-empty (or partially
-// applied) state if a later step in the same request fails.
-async function applyTaskLinks(projectId, taskId, { parentTaskIds, childTaskIds, relatedTaskIds }) {
+// Delete+recreate runs inside one transaction so a save never leaves links in
+// a transiently-empty (or partially applied) state if a later step in the
+// same request fails.
+async function applyTaskLinks(projectId, taskId, { relatedTaskIds }) {
   const operations = []
 
-  if (parentTaskIds !== undefined) {
-    const ids = await sameProjectTaskIds(projectId, taskId, parentTaskIds)
-    operations.push(prisma.taskLink.deleteMany({ where: { fromTaskId: taskId, type: 'parent' } }))
-    if (ids.length > 0) {
-      operations.push(
-        prisma.taskLink.createMany({
-          data: ids.map((toTaskId) => ({ fromTaskId: taskId, toTaskId, type: 'parent' })),
-        }),
-      )
-    }
-  }
-  if (childTaskIds !== undefined) {
-    const ids = await sameProjectTaskIds(projectId, taskId, childTaskIds)
-    operations.push(prisma.taskLink.deleteMany({ where: { toTaskId: taskId, type: 'parent' } }))
-    if (ids.length > 0) {
-      operations.push(
-        prisma.taskLink.createMany({
-          data: ids.map((fromTaskId) => ({ fromTaskId, toTaskId: taskId, type: 'parent' })),
-        }),
-      )
-    }
-  }
   if (relatedTaskIds !== undefined) {
     const ids = await sameProjectTaskIds(projectId, taskId, relatedTaskIds)
     operations.push(
@@ -143,6 +144,28 @@ async function applyTaskLinks(projectId, taskId, { parentTaskIds, childTaskIds, 
   }
 
   if (operations.length > 0) await prisma.$transaction(operations)
+}
+
+// 하위 작업 계층은 딱 1단계만 허용한다(서버 검증, DB 제약 아님) — 후보가 이미
+// 누군가의 하위 작업이면(조부모가 생기므로) 거부하고, 이 일감 자신이 이미
+// 하위 작업을 갖고 있으면(부모이면서 동시에 자식이 되므로) 거부한다.
+// previousParentId와 같으면(안 바뀌는 경우) 검사를 건너뛴다. taskId가 없으면
+// (생성 시점) 자기 자식 개수 검사는 스킵 — 새 일감은 아직 자식이 있을 수 없다.
+async function assertValidParent(projectId, taskId, parentTaskId, previousParentId) {
+  if (!parentTaskId) return null
+  if (parentTaskId === previousParentId) return null
+  if (parentTaskId === taskId) return '자기 자신을 상위 일감으로 지정할 수 없습니다'
+  const candidate = await prisma.task.findFirst({
+    where: { id: parentTaskId, projectId },
+    select: { parentTaskId: true },
+  })
+  if (!candidate) return 'Parent task must be in the same project'
+  if (candidate.parentTaskId) return '이미 다른 일감의 하위 작업으로 등록된 일감은 상위 일감으로 지정할 수 없습니다'
+  if (taskId) {
+    const ownChildrenCount = await prisma.task.count({ where: { parentTaskId: taskId } })
+    if (ownChildrenCount > 0) return '하위 작업이 있는 일감은 다른 일감의 하위 작업이 될 수 없습니다'
+  }
+  return null
 }
 
 // An assignee who isn't on the project couldn't open the task they were
@@ -193,7 +216,17 @@ async function notifyIfNewAssignee(task, actor, previousAssigneeId) {
 // 넘기는 조건부 스프레드 객체 그대로 — 그 안에 있는 키만 "이번 요청에서 실제로
 // 바뀐 필드"다. description은 마크다운 원문이 길어질 수 있어 값 자체는 남기지
 // 않고 변경됐다는 사실만 기록한다(항상 fromValue/toValue null).
-const ACTIVITY_TRACKED_FIELDS = ['title', 'type', 'grade', 'status', 'assigneeId', 'startAt', 'endAt', 'description']
+const ACTIVITY_TRACKED_FIELDS = [
+  'title',
+  'type',
+  'grade',
+  'status',
+  'assigneeId',
+  'startAt',
+  'endAt',
+  'description',
+  'parentTaskId',
+]
 
 function serializeActivityValue(value) {
   if (value === null || value === undefined) return null
@@ -246,13 +279,14 @@ router.get('/', requireProjectRole('member'), async (req, res) => {
 router.get('/:id', requireProjectRole('member'), async (req, res) => {
   const task = await prisma.task.findFirst({
     where: { id: req.params.id, projectId: req.params.projectId },
-    include: taskInclude,
+    include: taskDetailInclude,
   })
   if (!task) return res.status(404).json({ error: 'Not found' })
   const memberIds = await currentMemberIds(req.params.projectId)
   res.json(decryptTask(task, memberIds, req.user, req.projectAccess))
 })
 
+// 'related'(연결일감)만 남았다 — 부모/자식은 Task.parentTaskId 계층으로 대체됨.
 router.get('/:id/links', requireProjectRole('member'), async (req, res) => {
   const task = await prisma.task.findFirst({
     where: { id: req.params.id, projectId: req.params.projectId },
@@ -260,24 +294,12 @@ router.get('/:id/links', requireProjectRole('member'), async (req, res) => {
   })
   if (!task) return res.status(404).json({ error: 'Not found' })
 
-  const [parentLinks, childLinks, relatedLinks] = await Promise.all([
-    prisma.taskLink.findMany({
-      where: { fromTaskId: task.id, type: 'parent' },
-      select: { toTask: { select: linkTaskSelect } },
-    }),
-    prisma.taskLink.findMany({
-      where: { toTaskId: task.id, type: 'parent' },
-      select: { fromTask: { select: linkTaskSelect } },
-    }),
-    prisma.taskLink.findMany({
-      where: { type: 'related', OR: [{ fromTaskId: task.id }, { toTaskId: task.id }] },
-      select: { fromTaskId: true, fromTask: { select: linkTaskSelect }, toTask: { select: linkTaskSelect } },
-    }),
-  ])
+  const relatedLinks = await prisma.taskLink.findMany({
+    where: { type: 'related', OR: [{ fromTaskId: task.id }, { toTaskId: task.id }] },
+    select: { fromTaskId: true, fromTask: { select: linkTaskSelect }, toTask: { select: linkTaskSelect } },
+  })
 
   res.json({
-    parents: parentLinks.map((l) => l.toTask),
-    children: childLinks.map((l) => l.fromTask),
     related: relatedLinks.map((l) => (l.fromTaskId === task.id ? l.toTask : l.fromTask)),
   })
 })
@@ -292,8 +314,7 @@ router.post('/', requireProjectRole('member'), async (req, res) => {
     assigneeId,
     startAt,
     endAt,
-    parentTaskIds,
-    childTaskIds,
+    parentTaskId,
     relatedTaskIds,
   } = req.body
   if (!title) return res.status(400).json({ error: 'title is required' })
@@ -312,6 +333,9 @@ router.post('/', requireProjectRole('member'), async (req, res) => {
   const problem = await assertAssigneeIsMember(req.params.projectId, assigneeId, null)
   if (problem) return res.status(400).json({ error: problem })
 
+  const parentProblem = await assertValidParent(req.params.projectId, null, parentTaskId, null)
+  if (parentProblem) return res.status(400).json({ error: parentProblem })
+
   const task = await prisma.task.create({
     data: {
       projectId: req.params.projectId,
@@ -324,10 +348,11 @@ router.post('/', requireProjectRole('member'), async (req, res) => {
       assigneeId: assigneeId || null,
       startAt: startAt ? new Date(startAt) : null,
       endAt: endAt ? new Date(endAt) : null,
+      parentTaskId: parentTaskId || null,
     },
-    include: taskInclude,
+    include: taskWriteInclude,
   })
-  await applyTaskLinks(req.params.projectId, task.id, { parentTaskIds, childTaskIds, relatedTaskIds })
+  await applyTaskLinks(req.params.projectId, task.id, { relatedTaskIds })
   await prisma.taskActivity.create({ data: { taskId: task.id, actorId: req.user.id, action: 'created' } })
   notifyIfNewAssignee(task, req.user, null)
   const memberIds = await currentMemberIds(req.params.projectId)
@@ -352,8 +377,7 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
     assigneeId,
     startAt,
     endAt,
-    parentTaskIds,
-    childTaskIds,
+    parentTaskId,
     relatedTaskIds,
   } = req.body
   if (type !== undefined && !isValidTaskType(type)) {
@@ -375,6 +399,16 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
     if (problem) return res.status(400).json({ error: problem })
   }
 
+  if (parentTaskId !== undefined) {
+    const parentProblem = await assertValidParent(
+      req.params.projectId,
+      req.params.id,
+      parentTaskId,
+      existing.parentTaskId,
+    )
+    if (parentProblem) return res.status(400).json({ error: parentProblem })
+  }
+
   const data = {
     ...(title !== undefined && { title }),
     ...(description !== undefined && { description }),
@@ -384,6 +418,7 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
     ...(assigneeId !== undefined && { assigneeId: assigneeId || null }),
     ...(startAt !== undefined && { startAt: startAt ? new Date(startAt) : null }),
     ...(endAt !== undefined && { endAt: endAt ? new Date(endAt) : null }),
+    ...(parentTaskId !== undefined && { parentTaskId: parentTaskId || null }),
   }
   const activityChanges = computeTaskActivityChanges(existing, data)
   // 마감일이 바뀌면 이전 마감 기준으로 이미 보낸 D-3 리마인더는 새 날짜에
@@ -393,9 +428,9 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
   const task = await prisma.task.update({
     where: { id: req.params.id },
     data,
-    include: taskInclude,
+    include: taskWriteInclude,
   })
-  await applyTaskLinks(req.params.projectId, task.id, { parentTaskIds, childTaskIds, relatedTaskIds })
+  await applyTaskLinks(req.params.projectId, task.id, { relatedTaskIds })
   if (activityChanges.length > 0) {
     await prisma.taskActivity.createMany({
       data: activityChanges.map((c) => ({ taskId: task.id, actorId: req.user.id, action: 'field_changed', ...c })),
