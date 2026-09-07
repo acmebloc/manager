@@ -144,13 +144,13 @@ function TaskTable({ sections, onNavigateToTask, onMoveTask }) {
                     className="cursor-pointer border-t border-gray-100 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800/50"
                   >
                     <td className="px-3 py-2 font-medium text-gray-900 dark:text-white">{task.title}</td>
-                    <td className="px-3 py-2">
+                    <td className="whitespace-nowrap px-3 py-2">
                       <span className={pillClassName}>{taskTypeLabel(task.type)}</span>
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="whitespace-nowrap px-3 py-2">
                       <span className={pillClassName}>{taskGradeLabel(task.grade)}</span>
                     </td>
-                    <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                    <td className="whitespace-nowrap px-3 py-2" onClick={(e) => e.stopPropagation()}>
                       {task.canModify ? (
                         <select
                           value={task.status}
@@ -167,12 +167,12 @@ function TaskTable({ sections, onNavigateToTask, onMoveTask }) {
                         <span className={pillClassName}>{taskStatusLabel(task.status)}</span>
                       )}
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="max-w-[180px] px-3 py-2">
                       <span className={`flex items-center gap-1.5 ${!task.assigneeIsMember ? 'opacity-50' : ''}`}>
                         {task.assignee ? (
                           <>
                             <Avatar user={task.assignee} />
-                            {task.assignee.name}
+                            <span className="max-w-[140px] truncate">{task.assignee.name}</span>
                           </>
                         ) : (
                           '미배정'
