@@ -557,6 +557,7 @@ function TaskFormPage() {
           <div className="mb-4">
             <TaskAttachments projectId={projectId} taskId={taskId} canModify={task.canModify} />
           </div>
+          <hr className="my-4 border-gray-100 dark:border-gray-800" />
           <TaskComments projectId={projectId} taskId={taskId} members={memberUsers} />
           <TaskActivityLog projectId={projectId} taskId={taskId} />
         </>

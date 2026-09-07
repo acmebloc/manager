@@ -159,11 +159,17 @@ async function assertValidParent(projectId, taskId, parentTaskId, previousParent
     where: { id: parentTaskId, projectId },
     select: { parentTaskId: true },
   })
-  if (!candidate) return 'Parent task must be in the same project'
-  if (candidate.parentTaskId) return '이미 다른 일감의 하위 작업으로 등록된 일감은 상위 일감으로 지정할 수 없습니다'
+  if (!candidate) return '상위 일감으로 지정하려는 일감이 같은 프로젝트 안에 없습니다'
+  // 이 함수는 어느 쪽에서 불렸는지(상위 일감 필드를 직접 바꾼 건지, 하위 작업
+  // 피커에서 다른 일감을 자식으로 추가한 건지) 모른 채로 "taskId를
+  // parentTaskId의 자식으로 만들어도 되는가"만 판단한다 — 그래서 메시지도
+  // "일감" 대신 항상 역할(상위/하위)로 지칭해야 어느 화면에서 떠도 뜻이
+  // 통한다. "이 일감" 같은 표현은 하위 작업 피커에서 다른 일감을 추가할 때는
+  // 사실 지금 보고 있는 화면의 일감(parentTaskId)을 가리키게 되어 헷갈린다.
+  if (candidate.parentTaskId) return '상위 일감으로 지정하려는 일감은 이미 다른 일감의 하위 작업으로 등록되어 있어 상위 일감이 될 수 없습니다'
   if (taskId) {
     const ownChildrenCount = await prisma.task.count({ where: { parentTaskId: taskId } })
-    if (ownChildrenCount > 0) return '하위 작업이 있는 일감은 다른 일감의 하위 작업이 될 수 없습니다'
+    if (ownChildrenCount > 0) return '하위 작업으로 지정하려는 일감에 이미 하위 작업이 있어 다른 일감의 하위 작업이 될 수 없습니다'
   }
   return null
 }
