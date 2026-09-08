@@ -559,6 +559,7 @@ function TaskFormPage() {
           </div>
           <hr className="my-4 border-gray-100 dark:border-gray-800" />
           <TaskComments projectId={projectId} taskId={taskId} members={memberUsers} />
+          <hr className="my-4 border-gray-100 dark:border-gray-800" />
           <TaskActivityLog projectId={projectId} taskId={taskId} />
         </>
       )}
