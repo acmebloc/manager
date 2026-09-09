@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch } from '../lib/api'
-import { statusOptions, TASK_GRADES, TASK_TYPES, taskStatusLabel } from '../lib/taskFields'
+import {
+  isOutsideProjectPeriod,
+  projectPeriodLabel,
+  statusOptions,
+  TASK_GRADES,
+  TASK_TYPES,
+  taskStatusLabel,
+} from '../lib/taskFields'
 import { submitStatusChange } from '../lib/taskReview'
 import { FollowerList, FollowerPicker } from '../components/FollowerPicker'
 import { Avatar } from '../components/ProjectMembers'
@@ -167,12 +174,13 @@ function TaskFormPage() {
 
   const dateProblem = draft.startAt && draft.endAt && draft.startAt > draft.endAt ? '시작일은 종료일보다 늦을 수 없습니다' : ''
 
-  const dateOutOfProjectRange = useMemo(() => {
-    if (!project) return false
-    const start = draft.startAt && project.startAt && draft.startAt < toDateInputValue(project.startAt)
-    const end = draft.endAt && project.endAt && draft.endAt > toDateInputValue(project.endAt)
-    return Boolean(start || end)
-  }, [draft, project])
+  // 프로젝트 기간 검사는 엑셀 일괄등록 검수 화면과 규칙이 같아야 해서
+  // taskFields.js에 모아두고 여기서는 쓰기만 한다(서버도 같은 규칙을 강제한다).
+  const periodLabel = useMemo(() => projectPeriodLabel(project), [project])
+  const dateOutOfProjectRange = useMemo(
+    () => isOutsideProjectPeriod(project, [draft.startAt, draft.endAt]),
+    [draft.startAt, draft.endAt, project],
+  )
 
   const isDirty = useMemo(() => {
     if (!editing) return false
@@ -199,7 +207,9 @@ function TaskFormPage() {
 
   const save = async (event) => {
     event.preventDefault()
-    if (dateProblem) return
+    // 프로젝트 기간을 벗어난 날짜는 저장하지 않는다(사용자 확인) — 버튼도
+    // 비활성이지만, Enter 키로 폼이 제출되는 경로가 따로 있어 여기서도 막는다.
+    if (dateProblem || dateOutOfProjectRange) return
     setSaving(true)
     try {
       const newLinks = { related: draft.relatedTasks }
@@ -454,8 +464,8 @@ function TaskFormPage() {
           </div>
           {dateProblem && <p className="text-sm text-red-600 dark:text-red-400">{dateProblem}</p>}
           {dateOutOfProjectRange && (
-            <p className="text-xs text-amber-600 dark:text-amber-400">
-              프로젝트 기간을 벗어난 날짜예요. 저장은 막지 않지만 확인해 주세요.
+            <p className="text-sm text-red-600 dark:text-red-400">
+              프로젝트 기간을 벗어난 날짜예요. 프로젝트 기간을 확인하세요. ({periodLabel})
             </p>
           )}
 
@@ -492,7 +502,7 @@ function TaskFormPage() {
           <div className="flex gap-2">
             <button
               type="submit"
-              disabled={saving || !draft.title.trim() || Boolean(dateProblem)}
+              disabled={saving || !draft.title.trim() || Boolean(dateProblem) || dateOutOfProjectRange}
               className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
             >
               {saving ? '저장 중...' : isNew ? '만들기' : '저장'}

@@ -21,6 +21,7 @@ import {
 } from '../lib/taskImport.js'
 import {
   assertDateOrder,
+  assertWithinProjectPeriod,
   isValidTaskGrade,
   isValidTaskStatus,
   isValidTaskType,
@@ -494,6 +495,8 @@ router.post('/', requireProjectRole('member'), async (req, res) => {
   }
   const dateProblem = assertDateOrder(startAt, endAt)
   if (dateProblem) return res.status(400).json({ error: dateProblem })
+  const periodProblem = assertWithinProjectPeriod(req.projectAccess.project, startAt, endAt)
+  if (periodProblem) return res.status(400).json({ error: periodProblem })
 
   const problem = await assertProjectMember(req.params.projectId, assigneeId, null, ASSIGNEE_NOT_MEMBER)
   if (problem) return res.status(400).json({ error: problem })
@@ -620,6 +623,13 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
   const nextEndAt = endAt !== undefined ? endAt : existing.endAt
   const dateProblem = assertDateOrder(nextStartAt, nextEndAt)
   if (dateProblem) return res.status(400).json({ error: dateProblem })
+  // 날짜를 실제로 보낸 요청에서만 프로젝트 기간을 본다 — 상태 변경처럼 날짜를
+  // 안 건드리는 요청까지 막으면, 프로젝트 기간이 나중에 좁혀져 범위를 벗어나버린
+  // 기존 일감은 칸반에서 상태조차 못 바꾸게 된다.
+  if (startAt !== undefined || endAt !== undefined) {
+    const periodProblem = assertWithinProjectPeriod(req.projectAccess.project, nextStartAt, nextEndAt)
+    if (periodProblem) return res.status(400).json({ error: periodProblem })
+  }
 
   if (assigneeId !== undefined) {
     const problem = await assertProjectMember(
@@ -757,6 +767,9 @@ router.patch('/:id/dates', requireProjectRole('member'), async (req, res) => {
   const nextEndAt = endAt !== undefined ? endAt : existing.endAt
   const dateProblem = assertDateOrder(nextStartAt, nextEndAt)
   if (dateProblem) return res.status(400).json({ error: dateProblem })
+  // 간트차트에서 막대를 끌어 옮기는 경로 — 날짜만 바꾸는 라우트라 늘 검사한다.
+  const periodProblem = assertWithinProjectPeriod(req.projectAccess.project, nextStartAt, nextEndAt)
+  if (periodProblem) return res.status(400).json({ error: periodProblem })
 
   const data = {
     ...(startAt !== undefined && { startAt: startAt ? new Date(startAt) : null }),
@@ -843,6 +856,14 @@ router.post('/import/preview', requireProjectRole('pm'), (req, res) => {
 
     res.json({
       rows,
+      // 검수 화면이 날짜를 인라인으로 고칠 때마다 서버를 왕복하지 않고 그 자리에서
+      // "기간 밖" 판정을 다시 하도록, 기존 일감 중복 키와 같은 방식으로 프로젝트
+      // 기간도 한 번만 내려준다.
+      projectPeriod: {
+        name: req.projectAccess.project.name,
+        startAt: req.projectAccess.project.startAt,
+        endAt: req.projectAccess.project.endAt,
+      },
       existingTaskKeys: existingTaskDedupeKeys(existingTasks),
       // 검수 화면의 담당자/작성자 드롭다운용 — 이름만 필요하니 role/createdAt은
       // 뺀다(어차피 firstPm 계산은 서버가 파싱 단계에서 이미 끝냈다).
@@ -871,7 +892,9 @@ router.post('/import/commit', requireProjectRole('pm'), async (req, res) => {
       failed.push({ rowNumber: row.rowNumber, error: 'title is required' })
       continue
     }
-    const dateProblem = assertDateOrder(row.startAt, row.endAt)
+    const dateProblem =
+      assertDateOrder(row.startAt, row.endAt) ||
+      assertWithinProjectPeriod(req.projectAccess.project, row.startAt, row.endAt)
     if (dateProblem) {
       failed.push({ rowNumber: row.rowNumber, error: dateProblem })
       continue

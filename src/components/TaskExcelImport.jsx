@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { apiFetch, apiUpload } from '../lib/api'
 import { matchesKoreanQuery } from '../lib/korean'
+import { isOutsideProjectPeriod, projectPeriodLabel } from '../lib/taskFields'
 import { formatFileSize, isAllowedExcelExt, MAX_ATTACHMENT_SIZE } from '../lib/uploads'
 
 function toDateInputValue(iso) {
@@ -28,8 +29,14 @@ function isDateOrderInvalid(row) {
   return Boolean(row.startAt && row.endAt && row.startAt > row.endAt)
 }
 
-function isRowValid(row) {
-  return !isTitleMissing(row) && !isDateOrderInvalid(row)
+// 프로젝트 기간을 벗어난 날짜는 서버가 행 단위로 거절한다(일감 폼과 같은 규칙) —
+// 커밋 후에 실패로 돌아오게 두지 않고 이 화면에서 미리 걸러 고치게 한다.
+function isOutOfProjectPeriod(row, period) {
+  return isOutsideProjectPeriod(period, [row.startAt, row.endAt])
+}
+
+function isRowValid(row, period) {
+  return !isTitleMissing(row) && !isDateOrderInvalid(row) && !isOutOfProjectPeriod(row, period)
 }
 
 function isRowEdited(row) {
@@ -128,6 +135,7 @@ function MemberPicker({ members, value, onChange, emptyLabel = '미배정' }) {
 function TaskExcelImport({ projectId, onImported }) {
   const [rows, setRows] = useState(null)
   const [members, setMembers] = useState([])
+  const [projectPeriod, setProjectPeriod] = useState(null)
   const [existingKeys, setExistingKeys] = useState(new Set())
   const [uploading, setUploading] = useState(false)
   const [committing, setCommitting] = useState(false)
@@ -159,6 +167,7 @@ function TaskExcelImport({ projectId, onImported }) {
       const keySet = new Set(data.existingTaskKeys)
       setExistingKeys(keySet)
       setMembers(data.members)
+      setProjectPeriod(data.projectPeriod)
       setRows(
         data.rows.map((row) => {
           const original = {
@@ -170,7 +179,7 @@ function TaskExcelImport({ projectId, onImported }) {
             createdById: row.createdById,
           }
           const duplicate = keySet.has(dedupeKey(row.title, row.startAt, row.endAt))
-          return { ...row, original, included: isRowValid(row) && !duplicate }
+          return { ...row, original, included: isRowValid(row, data.projectPeriod) && !duplicate }
         }),
       )
     } catch (err) {
@@ -200,8 +209,9 @@ function TaskExcelImport({ projectId, onImported }) {
     setRows((current) => current.map((row) => ({ ...row, included: include })))
   }
 
+  const periodLabel = projectPeriodLabel(projectPeriod)
   const checkedRows = rows?.filter((row) => row.included) ?? []
-  const invalidCheckedCount = checkedRows.filter((row) => !isRowValid(row)).length
+  const invalidCheckedCount = checkedRows.filter((row) => !isRowValid(row, projectPeriod)).length
   const canCommit = checkedRows.length > 0 && invalidCheckedCount === 0
   const allChecked = Boolean(rows && rows.length > 0 && checkedRows.length === rows.length)
   const duplicateCount =
@@ -273,6 +283,14 @@ function TaskExcelImport({ projectId, onImported }) {
             <p className="mb-3 shrink-0 text-xs text-gray-500 dark:text-gray-400">
               체크한 일감만 등록됩니다. 제목·날짜·담당자·검수자·작성자는 셀에서 바로 고칠 수 있습니다. 참조자는 등록
               후 일감 화면에서 수정할 수 있습니다.
+              {periodLabel && (
+                <>
+                  {' '}
+                  <span className="text-gray-600 dark:text-gray-300">
+                    프로젝트 기간({periodLabel})을 벗어난 날짜는 등록할 수 없습니다.
+                  </span>
+                </>
+              )}
             </p>
 
             <div className="overflow-auto">
@@ -304,6 +322,8 @@ function TaskExcelImport({ projectId, onImported }) {
                     const reviewerTouched = row.reviewerId !== row.original.reviewerId
                     const createdByTouched = row.createdById !== row.original.createdById
                     const dateOrderInvalid = isDateOrderInvalid(row)
+                    const outOfPeriod = isOutOfProjectPeriod(row, projectPeriod)
+                    const dateInvalid = dateOrderInvalid || outOfPeriod
                     const titleMissing = isTitleMissing(row)
 
                     return (
@@ -353,7 +373,7 @@ function TaskExcelImport({ projectId, onImported }) {
                               updateRow(row.rowNumber, { startAt: fromDateInputValue(event.target.value) })
                             }
                             className={`w-[130px] rounded border px-1.5 py-1 text-xs text-gray-900 dark:bg-gray-800 dark:text-white ${
-                              dateOrderInvalid ? 'border-red-400' : 'border-gray-300 dark:border-gray-600'
+                              dateInvalid ? 'border-red-400' : 'border-gray-300 dark:border-gray-600'
                             }`}
                           />
                         </td>
@@ -365,12 +385,17 @@ function TaskExcelImport({ projectId, onImported }) {
                               updateRow(row.rowNumber, { endAt: fromDateInputValue(event.target.value) })
                             }
                             className={`w-[130px] rounded border px-1.5 py-1 text-xs text-gray-900 dark:bg-gray-800 dark:text-white ${
-                              dateOrderInvalid ? 'border-red-400' : 'border-gray-300 dark:border-gray-600'
+                              dateInvalid ? 'border-red-400' : 'border-gray-300 dark:border-gray-600'
                             }`}
                           />
                           {dateOrderInvalid && (
                             <p className="mt-1 text-[10px] text-red-600 dark:text-red-400">
                               시작일은 종료일보다 늦을 수 없습니다
+                            </p>
+                          )}
+                          {outOfPeriod && (
+                            <p className="mt-1 w-[130px] text-[10px] text-red-600 dark:text-red-400">
+                              프로젝트 기간을 벗어났습니다
                             </p>
                           )}
                         </td>
