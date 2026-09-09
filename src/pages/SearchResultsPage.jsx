@@ -10,6 +10,10 @@ const SORT_OPTIONS = [
 const LABEL_STYLES = {
   프로젝트: 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300',
   일감: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300',
+  // 검수 이력은 종류별로 나뉜다 — 산출물 설명(검수요청)과 반려 사유가 서로
+  // 성격이 아주 달라서, 한 라벨로 묶으면 결과를 훑을 때 구분이 안 된다.
+  검수요청: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300',
+  반려사유: 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300',
   댓글: 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300',
   첨부파일: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300',
   일정: 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300',

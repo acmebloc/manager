@@ -1,5 +1,12 @@
 import { useMemo, useState } from 'react'
-import { GRADE_RANK, taskGradeLabel, taskStatusLabel, taskTypeLabel, TASK_STATUSES } from '../lib/taskFields'
+import {
+  GRADE_RANK,
+  statusOptions,
+  taskGradeLabel,
+  taskStatusLabel,
+  taskTypeLabel,
+  TASK_STATUSES,
+} from '../lib/taskFields'
 import { Avatar } from './ProjectMembers'
 
 function formatDate(value) {
@@ -41,9 +48,11 @@ const pillClassName =
 // 어떤 컬럼을 클릭해도 그룹 구분이 흐트러지지 않는다. 그룹 헤더 행을 클릭하면
 // 그 프로젝트만 접혔다 펼쳐졌다 한다(기본은 전부 펼침) — 접힘/펼침을 구분하는
 // 별도 아이콘은 없다(확인됨), 행이 있고 없고 자체가 상태 표시다. 상태 변경
-// select는 보드의 드래그와 동일한 onMoveTask(낙관적 업데이트 + PATCH)를 그대로
-// 호출한다 — 드래그가 안 되는 터치 기기에서도 이 select로 상태를 바꿀 수 있다.
-function TaskTable({ sections, onNavigateToTask, onMoveTask }) {
+// select는 보드의 드래그와 동일한 onRequestStatusChange(전이 검사 → 필요하면
+// 검수요청/반려 팝업 → 낙관적 업데이트 + PATCH)를 그대로 호출한다 — 드래그가
+// 안 되는 터치 기기에서도 이 select로 상태를 바꿀 수 있다. 옵션은 서버가
+// 계산해준 allowedTransitions로 좁혀서, 갈 수 없는 상태는 애초에 안 뜬다.
+function TaskTable({ sections, onNavigateToTask, onRequestStatusChange }) {
   const [statusFilter, setStatusFilter] = useState('')
   const [myTasksOnly, setMyTasksOnly] = useState(false)
   const [sortKey, setSortKey] = useState('endAt')
@@ -151,13 +160,13 @@ function TaskTable({ sections, onNavigateToTask, onMoveTask }) {
                       <span className={pillClassName}>{taskGradeLabel(task.grade)}</span>
                     </td>
                     <td className="whitespace-nowrap px-3 py-2" onClick={(e) => e.stopPropagation()}>
-                      {task.canModify ? (
+                      {task.allowedTransitions?.length > 0 ? (
                         <select
                           value={task.status}
-                          onChange={(e) => onMoveTask(group.projectId, task.id, e.target.value)}
+                          onChange={(e) => onRequestStatusChange(group.projectId, task.id, e.target.value)}
                           className="rounded-full border border-gray-200 bg-gray-100 px-2 py-0.5 text-xs text-gray-600 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300"
                         >
-                          {TASK_STATUSES.map((s) => (
+                          {statusOptions(task.status, task.allowedTransitions).map((s) => (
                             <option key={s.value} value={s.value}>
                               {s.label}
                             </option>

@@ -39,6 +39,7 @@ function isRowEdited(row) {
     row.startAt !== o.startAt ||
     row.endAt !== o.endAt ||
     row.assigneeId !== o.assigneeId ||
+    row.reviewerId !== o.reviewerId ||
     row.createdById !== o.createdById
   )
 }
@@ -47,7 +48,7 @@ function isRowEdited(row) {
 // TaskPicker(로컬 배열 필터 + relative/absolute 드롭다운)와 같은 구조를 따르고,
 // 검색어 매칭은 멘션 기능(MarkdownEditor.jsx)이 이미 쓰는 matchesKoreanQuery로
 // 초성 검색까지 지원한다.
-function MemberPicker({ members, value, onChange }) {
+function MemberPicker({ members, value, onChange, emptyLabel = '미배정' }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const containerRef = useRef(null)
@@ -77,7 +78,7 @@ function MemberPicker({ members, value, onChange }) {
     <div className="relative" ref={containerRef}>
       <input
         type="text"
-        value={open ? query : (selected?.name ?? '미배정')}
+        value={open ? query : (selected?.name ?? emptyLabel)}
         onFocus={() => {
           setOpen(true)
           setQuery('')
@@ -97,7 +98,7 @@ function MemberPicker({ members, value, onChange }) {
               onClick={() => pick(null)}
               className="block w-full rounded px-2 py-1 text-left text-xs text-gray-500 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-700"
             >
-              미배정
+              {emptyLabel}
             </button>
           </li>
           {filtered.map((m) => (
@@ -165,6 +166,7 @@ function TaskExcelImport({ projectId, onImported }) {
             startAt: row.startAt,
             endAt: row.endAt,
             assigneeId: row.assigneeId,
+            reviewerId: row.reviewerId,
             createdById: row.createdById,
           }
           const duplicate = keySet.has(dedupeKey(row.title, row.startAt, row.endAt))
@@ -215,6 +217,8 @@ function TaskExcelImport({ projectId, onImported }) {
         startAt: row.startAt,
         endAt: row.endAt,
         assigneeId: row.assigneeId,
+        reviewerId: row.reviewerId,
+        followerIds: row.followerIds,
         createdById: row.createdById,
       }))
       const data = await apiFetch(`${basePath}/import/commit`, { method: 'POST', body: { rows: payload } })
@@ -267,7 +271,8 @@ function TaskExcelImport({ projectId, onImported }) {
               {duplicateCount > 0 && ` · 기존 일감과 중복 ${duplicateCount}건`}
             </h3>
             <p className="mb-3 shrink-0 text-xs text-gray-500 dark:text-gray-400">
-              체크한 일감만 등록됩니다. 제목·날짜·담당자·작성자는 셀에서 바로 고칠 수 있습니다.
+              체크한 일감만 등록됩니다. 제목·날짜·담당자·검수자·작성자는 셀에서 바로 고칠 수 있습니다. 참조자는 등록
+              후 일감 화면에서 수정할 수 있습니다.
             </p>
 
             <div className="overflow-auto">
@@ -286,6 +291,8 @@ function TaskExcelImport({ projectId, onImported }) {
                     <th className="pb-2 pr-3">시작일</th>
                     <th className="pb-2 pr-3">종료일</th>
                     <th className="pb-2 pr-3">담당자</th>
+                    <th className="pb-2 pr-3">검수자</th>
+                    <th className="pb-2 pr-3">참조자</th>
                     <th className="pb-2 pr-3">작성자</th>
                   </tr>
                 </thead>
@@ -294,6 +301,7 @@ function TaskExcelImport({ projectId, onImported }) {
                     const duplicate = existingKeys.has(dedupeKey(row.title, row.startAt, row.endAt))
                     const edited = isRowEdited(row)
                     const assigneeTouched = row.assigneeId !== row.original.assigneeId
+                    const reviewerTouched = row.reviewerId !== row.original.reviewerId
                     const createdByTouched = row.createdById !== row.original.createdById
                     const dateOrderInvalid = isDateOrderInvalid(row)
                     const titleMissing = isTitleMissing(row)
@@ -376,6 +384,32 @@ function TaskExcelImport({ projectId, onImported }) {
                             <p className="mt-1 w-28 text-[10px] text-amber-600 dark:text-amber-400">
                               엑셀 값 '{row.assigneeLabel}' 매칭 실패
                             </p>
+                          )}
+                        </td>
+                        <td className="py-2 pr-3">
+                          {/* 담당자와 검수자는 같은 사람일 수 없다 — 담당자로 고른
+                              사람은 이 목록에서 뺀다(서버도 같은 판단을 한다). */}
+                          <MemberPicker
+                            members={members.filter((m) => m.userId !== row.assigneeId)}
+                            value={row.reviewerId}
+                            onChange={(userId) => updateRow(row.rowNumber, { reviewerId: userId })}
+                            emptyLabel="미지정"
+                          />
+                          {!reviewerTouched && !row.reviewerId && row.reviewerLabel && (
+                            <p className="mt-1 w-28 text-[10px] text-amber-600 dark:text-amber-400">
+                              엑셀 값 '{row.reviewerLabel}' 미지정 처리
+                            </p>
+                          )}
+                        </td>
+                        <td className="py-2 pr-3">
+                          {/* 참조자는 여러 명이라 셀 안에서 고치게 하지 않고 매칭
+                              결과만 보여준다 — 등록 후 일감 화면에서 수정한다. */}
+                          {row.followerLabels.length > 0 ? (
+                            <span className="block w-32 text-[11px] text-gray-700 dark:text-gray-200">
+                              {row.followerLabels.join(', ')}
+                            </span>
+                          ) : (
+                            <span className="text-[11px] text-gray-400 dark:text-gray-500">없음</span>
                           )}
                         </td>
                         <td className="py-2 pr-3">

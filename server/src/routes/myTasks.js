@@ -33,10 +33,15 @@ router.get('/', async (req, res) => {
           status: true,
           createdById: true,
           assigneeId: true,
+          // 검수자는 화면에 안 보이지만 권한 판정에 필요하다 — taskPermissionFlags가
+          // isMine(담당자 또는 검수자)과 allowedTransitions를 이 값으로 계산한다.
+          reviewerId: true,
           endAt: true,
           createdAt: true,
           assignee: { select: { id: true, name: true, email: true, picture: true, deactivatedAt: true } },
-          _count: { select: { attachments: true, comments: true } },
+          // 산출물 파일(reviewId 있음)은 첨부 개수에서 뺀다 — tasks.js의
+          // taskInclude와 같은 조건이어야 두 목록의 배지 숫자가 일치한다.
+          _count: { select: { attachments: { where: { reviewId: null } }, comments: true } },
           checklistItems: { select: { done: true } },
         },
       },

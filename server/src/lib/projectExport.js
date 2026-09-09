@@ -30,8 +30,12 @@ export async function loadTaskExportData(projectId, projectName) {
     orderBy: { createdAt: 'asc' },
     include: {
       assignee: { select: userSelect },
+      reviewer: { select: userSelect },
       createdBy: { select: userSelect },
-      _count: { select: { attachments: true } },
+      followers: { select: { user: { select: userSelect } } },
+      // 검수 이력의 산출물 파일(reviewId 있음)은 "첨부파일유무"에서 뺀다 — 화면의
+      // 첨부파일 목록과 같은 조건이어야 O/X가 어긋나지 않는다.
+      _count: { select: { attachments: { where: { reviewId: null } } } },
     },
   })
 
@@ -41,6 +45,8 @@ export async function loadTaskExportData(projectId, projectName) {
     title: task.title,
     createdBy: task.createdBy ? decryptUser(task.createdBy) : null,
     assignee: task.assignee ? decryptUser(task.assignee) : null,
+    reviewer: task.reviewer ? decryptUser(task.reviewer) : null,
+    followers: task.followers.map((f) => decryptUser(f.user)),
     startAt: task.startAt,
     endAt: task.endAt,
     status: task.status,
@@ -55,6 +61,8 @@ export const TASK_TABLE_HEADERS = [
   '제목',
   '작성자',
   '담당자',
+  '검수자',
+  '참조자',
   '시작일',
   '종료일',
   '진행상태',
@@ -71,6 +79,10 @@ export function taskToTableRow(task) {
     제목: task.title,
     작성자: formatPerson(task.createdBy),
     담당자: formatPerson(task.assignee),
+    검수자: formatPerson(task.reviewer),
+    // 참조자는 여러 명이라 한 칸에 콤마로 이어 붙인다(사용자 확인) — CSV
+    // 이스케이프는 exportFormats.js의 buildCsv가 처리한다.
+    참조자: task.followers.map(formatPerson).join(', '),
     시작일: formatDate(task.startAt),
     종료일: formatDate(task.endAt),
     진행상태: taskStatusLabel(task.status),
@@ -95,6 +107,8 @@ export function taskToJsonRow(task) {
     title: task.title,
     createdBy: personToJson(task.createdBy),
     assignee: personToJson(task.assignee),
+    reviewer: personToJson(task.reviewer),
+    followers: task.followers.map(personToJson),
     startAt: task.startAt,
     endAt: task.endAt,
     status: task.status,

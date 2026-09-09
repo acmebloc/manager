@@ -37,7 +37,10 @@ model User {
   projects               Project[]               @relation("ProjectOwner")
   memberships            ProjectMember[]
   tasks                  Task[]                  @relation("TaskAssignee")
+  reviewingTasks         Task[]                  @relation("TaskReviewer")
   createdTasks           Task[]                  @relation("TaskCreatedBy")
+  taskReviews            TaskReview[]            @relation("TaskReviewAuthor")
+  taskFollowing          TaskFollower[]          @relation("TaskFollowerUser")
   uploadedAttachments    TaskAttachment[]        @relation("TaskAttachmentUploader")
   taskComments           TaskComment[]           @relation("TaskCommentAuthor")
   taskCommentMentions    TaskCommentMention[]    @relation("TaskCommentMentionedUser")
@@ -160,6 +163,12 @@ model Task {
   createdBy   User?     @relation("TaskCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   assigneeId  String?
   assignee    User?     @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  // 검수자 1명(선택값, docs/task-review-spec.md). 담당자와 같은 사람일 수 없다 —
+  // 양방향으로 서버에서 검증한다(DB 제약으로는 표현할 수 없음). 검수요청
+  // (진행중→검수중)을 하려면 반드시 채워져 있어야 하고, 검수중인 일감을
+  // 반려/최종완료할 수 있는 사람이기도 하다.
+  reviewerId  String?
+  reviewer    User?     @relation("TaskReviewer", fields: [reviewerId], references: [id])
   startAt     DateTime?
   endAt       DateTime?
   // 마감 D-3~D-day 리마인더 중 "마지막으로 보낸 날의 남은 일수"(dueReminderJob.js).
@@ -185,11 +194,60 @@ model Task {
   activities     TaskActivity[]
   checklistItems TaskChecklistItem[]
   subtasks       Task[]               @relation("TaskHierarchy")
+  reviews        TaskReview[]
+  followers      TaskFollower[]
 
   @@index([projectId, status])
   @@index([assigneeId])
+  @@index([reviewerId])
   @@index([endAt])
   @@index([parentTaskId])
+}
+
+// 검수 이력 — 검수요청/반려/최종완료 한 건씩. append-only로, 한 번 쓴 텍스트는
+// 수정도 삭제도 되지 않는다(TaskActivity와 같은 정신). 상태 전이와 1:1로 묶여
+// 있어서, 이 행 없이 검수중으로 들어가거나 검수중에서 뒤로 나오는 경로는 없다
+// (docs/task-review-spec.md 4장).
+//
+// 차수(1차/2차 검수)는 저장하지 않고 이력 순서에서 계산한다 — kind='request'가
+// 나올 때마다 1 증가하고 그 뒤의 reject/approve는 같은 차수에 속한다. 저장해두면
+// 이력이 늘 때마다 두 값을 함께 맞춰야 하는데, 애초에 순서만으로 유일하게
+// 결정되는 값이라 계산하는 쪽이 어긋날 여지가 없다.
+model TaskReview {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorId  String?
+  author    User?    @relation("TaskReviewAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  kind      String   // request | reject | approve
+  // 검수 내용(request) 또는 반려 사유(reject). approve는 승인 기록만 남기므로 null.
+  body      String?
+  // 산출물 링크(최대 5개, http/https만 — 서버에서 검증). Project.bookstackBookIds와
+  // 같은 Postgres 배열 컬럼: 링크마다 행을 만들 만큼의 조회 요구가 없다.
+  links     String[] @default([])
+  // 산출물 파일이 한 번이라도 교체·삭제된 적 있으면 true. 몇 번인지는 세지 않는다
+  // (사용자 확인) — 화면엔 "산출물이 변경되었습니다" 한 줄만 붙는다. 최초 업로드는
+  // 이 값을 건드리지 않고, 삭제가 일어날 때 켜진 뒤로는 다시 꺼지지 않는다.
+  outputReplaced Boolean @default(false)
+  createdAt DateTime @default(now())
+
+  attachments TaskAttachment[]
+
+  @@index([taskId, createdAt])
+}
+
+// 일감의 "참조자" — 진행 상황만 따라가는 사람들. ScheduleFollower와 동일한 조인
+// 테이블 패턴이고, 프로젝트에 참여한 인원만 배정할 수 있다(서버 검증). 담당자/
+// 검수자와 달리 "내 일감"에는 포함되지 않고, 등록/해제가 활동 로그에도 남지 않는다.
+model TaskFollower {
+  id     String @id @default(cuid())
+  taskId String
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation("TaskFollowerUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, userId])
+  @@index([userId])
 }
 
 // 일감 내부의 가벼운 체크리스트 — 서브태스크(위 parentTaskId)와는 무관한 별개
@@ -278,9 +336,17 @@ model TaskAttachment {
   storageKey   String   @unique           // 디스크상의 이름. 확장자 없음
   uploadedById String?
   uploadedBy   User?    @relation("TaskAttachmentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  // 검수 이력에 딸린 산출물 파일이면 그 이력을 가리킨다. null이면 일감의 일반
+  // 첨부파일 — 첨부파일 목록/개수는 항상 `reviewId: null`로 걸러서, 산출물이
+  // 첨부파일 목록에 섞여 보이지 않게 한다. 이렇게 테이블을 나누지 않고 재사용하는
+  // 이유는 20MB 상한·확장자 허용목록·업로드/다운로드 권한 검사를 그대로
+  // 물려받기 위해서다(docs/task-review-spec.md 3장).
+  reviewId     String?
+  review       TaskReview? @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   createdAt    DateTime @default(now())
 
   @@index([taskId])
+  @@index([reviewId])
 }
 
 model TaskComment {

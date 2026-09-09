@@ -54,6 +54,48 @@ export function notifyAssigned({ to, actorName, taskTitle, link }) {
   })
 }
 
+export function notifyReviewerAssigned({ to, actorName, taskTitle, link }) {
+  return notify({
+    to,
+    subject: `[Manager] "${taskTitle}" 검수자로 지정되었습니다`,
+    heading: `${actorName}님이 회원님을 "${taskTitle}" 일감의 검수자로 지정했습니다.`,
+    link,
+    linkLabel: '일감 보러 가기',
+  })
+}
+
+// 검수 흐름의 세 이벤트(docs/task-review-spec.md 5장) — 공을 넘겨받는 쪽에만
+// 보낸다. 검수요청은 검수자에게, 반려/최종완료는 담당자에게.
+export function notifyReviewRequested({ to, actorName, taskTitle, link }) {
+  return notify({
+    to,
+    subject: `[Manager] "${taskTitle}" 검수를 요청받았습니다`,
+    heading: `${actorName}님이 "${taskTitle}" 일감의 검수를 요청했습니다.`,
+    link,
+    linkLabel: '검수하러 가기',
+  })
+}
+
+export function notifyReviewRejected({ to, actorName, taskTitle, link }) {
+  return notify({
+    to,
+    subject: `[Manager] "${taskTitle}" 검수가 반려되었습니다`,
+    heading: `${actorName}님이 "${taskTitle}" 일감의 검수를 반려했습니다. 반려 사유를 확인해주세요.`,
+    link,
+    linkLabel: '일감 보러 가기',
+  })
+}
+
+export function notifyReviewApproved({ to, actorName, taskTitle, link }) {
+  return notify({
+    to,
+    subject: `[Manager] "${taskTitle}" 검수가 완료되었습니다`,
+    heading: `${actorName}님이 "${taskTitle}" 일감의 검수를 완료 처리했습니다.`,
+    link,
+    linkLabel: '일감 보러 가기',
+  })
+}
+
 export function notifyScheduleFollower({ to, actorName, scheduleTitle, link }) {
   return notify({
     to,

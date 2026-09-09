@@ -1,18 +1,27 @@
 import { Router } from 'express'
 import { prisma } from '../db.js'
 import { requireProjectRole } from '../lib/projectAccess.js'
-import { canModifyTask } from '../lib/taskPermissions.js'
+import { canEditTaskFields } from '../lib/taskPermissions.js'
 
 // Mounted at /api/projects/:projectId/tasks/:taskId/checklist — a light
 // add/toggle/delete list, not user-authored content like comments, so there's
 // no "only the author can edit" rule: anyone who can modify the task
-// (canModifyTask — admin/creator/assignee) can touch its checklist items.
+// (canEditTaskFields — admin/creator/assignee/reviewer) can touch its checklist
+// items. 완료된 일감은 통째로 잠기므로 체크 토글도 막힌다
+// (docs/task-review-spec.md 8장).
 const router = Router({ mergeParams: true })
+
+function checklistDenyMessage(task) {
+  if (task.status === 'done') return '완료된 일감은 체크리스트를 변경할 수 없습니다'
+  return 'Forbidden'
+}
 
 async function loadTask(req, res) {
   const task = await prisma.task.findFirst({
     where: { id: req.params.taskId, projectId: req.params.projectId },
-    select: { id: true, createdById: true, assigneeId: true },
+    // status와 reviewerId는 권한 판정(canEditTaskFields)에 필요하다 — 완료
+    // 잠금과 검수자 여부를 여기서 같이 본다.
+    select: { id: true, status: true, createdById: true, assigneeId: true, reviewerId: true },
   })
   if (!task) {
     res.status(404).json({ error: 'Not found' })
@@ -35,8 +44,8 @@ router.get('/', requireProjectRole('member'), async (req, res) => {
 router.post('/', requireProjectRole('member'), async (req, res) => {
   const task = await loadTask(req, res)
   if (!task) return
-  if (!canModifyTask(task, req.user, req.projectAccess)) {
-    return res.status(403).json({ error: 'Forbidden' })
+  if (!canEditTaskFields(task, req.user, req.projectAccess)) {
+    return res.status(403).json({ error: checklistDenyMessage(task) })
   }
 
   const { text } = req.body
@@ -57,8 +66,8 @@ router.post('/', requireProjectRole('member'), async (req, res) => {
 router.patch('/:id', requireProjectRole('member'), async (req, res) => {
   const task = await loadTask(req, res)
   if (!task) return
-  if (!canModifyTask(task, req.user, req.projectAccess)) {
-    return res.status(403).json({ error: 'Forbidden' })
+  if (!canEditTaskFields(task, req.user, req.projectAccess)) {
+    return res.status(403).json({ error: checklistDenyMessage(task) })
   }
 
   const existing = await prisma.taskChecklistItem.findFirst({
@@ -79,8 +88,8 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
 router.delete('/:id', requireProjectRole('member'), async (req, res) => {
   const task = await loadTask(req, res)
   if (!task) return
-  if (!canModifyTask(task, req.user, req.projectAccess)) {
-    return res.status(403).json({ error: 'Forbidden' })
+  if (!canEditTaskFields(task, req.user, req.projectAccess)) {
+    return res.status(403).json({ error: checklistDenyMessage(task) })
   }
 
   const existing = await prisma.taskChecklistItem.findFirst({

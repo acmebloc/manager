@@ -53,6 +53,10 @@ const HEADER_SYNONYMS = {
   endAt: ['종료일', '마감일', '종료날짜'],
   createdBy: ['작성자', '등록자'],
   assignee: ['담당자'],
+  reviewer: ['검수자', '리뷰어'],
+  // 참조자는 여러 명이라 한 칸에 콤마로 이어 적는다(사용자 확인) — 열을 여러
+  // 개 두거나 줄바꿈으로 나누는 방식은 쓰지 않는다.
+  followers: ['참조자'],
 }
 
 // exceljs 셀 값은 문자열/숫자/Date/서식 객체({richText, formula 결과 등})로 들어올
@@ -120,6 +124,31 @@ export function resolveMemberByName(members, rawValue) {
   return { userId: null, label: text, reason: 'ambiguous' }
 }
 
+// 참조자 칸(콤마 구분)을 사람 목록으로 바꾼다. 3명 중 1명만 매칭이 안 되면 그
+// 1명만 빼고 나머지는 그대로 등록한다(행 전체를 버리지 않는다) — 담당자 매칭
+// 실패 시 "미배정 + 경고"와 같은 정신이다. 중복 이름은 한 번만 담는다.
+export function resolveFollowersByNames(members, rawValue) {
+  const text = cellText(rawValue).trim()
+  if (!text) return { userIds: [], labels: [], unresolved: [] }
+
+  const userIds = []
+  const labels = []
+  const unresolved = []
+  for (const piece of text.split(',')) {
+    const name = piece.trim()
+    if (!name) continue
+    const resolved = resolveMemberByName(members, name)
+    if (!resolved.userId) {
+      if (!unresolved.includes(name)) unresolved.push(name)
+      continue
+    }
+    if (userIds.includes(resolved.userId)) continue
+    userIds.push(resolved.userId)
+    labels.push(resolved.label)
+  }
+  return { userIds, labels, unresolved }
+}
+
 // PM으로 가장 먼저 등록된 멤버 — "관례상 가장 자연스러운 원래 PM"을 작성자
 // 미기재 행의 기본 등록자로 쓰기 위함(프로젝트는 PM이 여러 명일 수 있음).
 export function firstPm(members) {
@@ -156,14 +185,48 @@ export function parseImportRows(worksheet, headerMap, members) {
     const assigneeText = cellText(assigneeCell).trim()
     const createdByCell = headerMap.createdBy ? row.getCell(headerMap.createdBy).value : null
     const createdByText = cellText(createdByCell).trim()
+    const reviewerCell = headerMap.reviewer ? row.getCell(headerMap.reviewer).value : null
+    const reviewerText = cellText(reviewerCell).trim()
+    const followersCell = headerMap.followers ? row.getCell(headerMap.followers).value : null
+    const followersText = cellText(followersCell).trim()
 
-    if (!titleText && !startAt && !endAt && !assigneeText && !createdByText) continue
+    if (
+      !titleText &&
+      !startAt &&
+      !endAt &&
+      !assigneeText &&
+      !createdByText &&
+      !reviewerText &&
+      !followersText
+    ) {
+      continue
+    }
 
     const assigneeResolved = resolveMemberByName(members, assigneeCell)
     if (assigneeResolved.reason === 'not_found') {
       warnings.push(`담당자 '${assigneeResolved.label}'을(를) 프로젝트 멤버에서 찾을 수 없어 미배정 처리했습니다`)
     } else if (assigneeResolved.reason === 'ambiguous') {
       warnings.push(`담당자 '${assigneeResolved.label}'과(와) 이름이 같은 멤버가 여러 명이라 미배정 처리했습니다`)
+    }
+
+    let reviewerResolved = resolveMemberByName(members, reviewerCell)
+    if (reviewerResolved.reason === 'not_found') {
+      warnings.push(`검수자 '${reviewerResolved.label}'을(를) 프로젝트 멤버에서 찾을 수 없어 미지정 처리했습니다`)
+    } else if (reviewerResolved.reason === 'ambiguous') {
+      warnings.push(`검수자 '${reviewerResolved.label}'과(와) 이름이 같은 멤버가 여러 명이라 미지정 처리했습니다`)
+    } else if (reviewerResolved.userId && reviewerResolved.userId === assigneeResolved.userId) {
+      // 담당자와 검수자는 같은 사람일 수 없다 — 행 전체를 실패시키는 대신
+      // 검수자만 비우고 경고한다(서버의 import/commit도 같은 판단을 한다).
+      warnings.push(`담당자와 검수자가 같은 사람('${reviewerResolved.label}')이라 검수자를 미지정 처리했습니다`)
+      reviewerResolved = { userId: null, label: reviewerResolved.label, reason: null }
+    }
+
+    const followersResolved = resolveFollowersByNames(members, followersCell)
+    for (const name of followersResolved.unresolved) {
+      // 못 찾은 경우와 동명이인인 경우를 한 문구로 묶는다 — 참조자는 한 칸에
+      // 여러 명이 들어와서, 실패 사유별로 문장을 나누면 경고가 행마다 길게
+      // 늘어지기만 하고 사용자가 할 일(그 이름을 고치는 것)은 똑같다.
+      warnings.push(`참조자 '${name}'을(를) 찾을 수 없거나 동명이인이라 제외했습니다`)
     }
 
     let createdByResolved = resolveMemberByName(members, createdByCell)
@@ -188,6 +251,10 @@ export function parseImportRows(worksheet, headerMap, members) {
       endAt: endAt ? endAt.toISOString() : null,
       assigneeId: assigneeResolved.userId,
       assigneeLabel: assigneeResolved.label,
+      reviewerId: reviewerResolved.userId,
+      reviewerLabel: reviewerResolved.label,
+      followerIds: followersResolved.userIds,
+      followerLabels: followersResolved.labels,
       createdById: createdByResolved.userId,
       createdByLabel: createdByResolved.label,
       createdByFallback,

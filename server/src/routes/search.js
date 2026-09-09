@@ -2,8 +2,9 @@ import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
 import { resolveMentionText } from '../lib/mentionText.js'
+import { REVIEW_SEARCH_LABELS } from '../lib/taskReview.js'
 
-// 매니저 자체 데이터(프로젝트/일감/댓글/일정/첨부파일명/사용자)만 대상 —
+// 매니저 자체 데이터(프로젝트/일감/검수이력/댓글/일정/첨부파일명/사용자)만 대상 —
 // 게시판(BookStack)은 별도 시스템·별도 권한 모델이라 이번 범위 밖.
 const router = Router()
 
@@ -76,7 +77,8 @@ router.get('/', async (req, res) => {
     : { projectId: { in: projectIds }, project: { archivedAt: null } }
   const textContains = { contains: escapeLikePattern(q), mode: 'insensitive' }
 
-  const [projects, tasks, taskComments, projectComments, schedules, attachments, users] = await Promise.all([
+  // 이 구조분해는 아래 Promise.all의 항목 순서와 1:1로 읽어야 하므로 한 줄로 둔다.
+  const [projects, tasks, taskReviews, taskComments, projectComments, schedules, attachments, users] = await Promise.all([
     prisma.project.findMany({
       where: { ...projectScope, OR: [{ name: textContains }, { description: textContains }] },
       select: { id: true, name: true, description: true, updatedAt: true },
@@ -90,6 +92,19 @@ router.get('/', async (req, res) => {
         description: true,
         updatedAt: true,
         project: { select: { name: true } },
+      },
+    }),
+    // 산출물 설명(검수요청)과 반려 사유 — 이력 텍스트는 마크다운도 멘션도 아닌
+    // 평문이라 댓글과 달리 DB의 contains로 바로 걸러진다. 최종완료 이력은 본문이
+    // 없어(승인 기록만) 애초에 검색 대상이 아니다.
+    prisma.taskReview.findMany({
+      where: { kind: { in: ['request', 'reject'] }, body: textContains, task: taskProjectScope },
+      select: {
+        id: true,
+        kind: true,
+        body: true,
+        createdAt: true,
+        task: { select: { id: true, title: true, projectId: true, project: { select: { name: true } } } },
       },
     }),
     // 댓글은 :mention[userId] 마커를 이름으로 치환한 뒤에야 진짜 매치 여부를
@@ -193,6 +208,24 @@ router.get('/', async (req, res) => {
       meta: t.project.name,
       link: `/tasks/${t.projectId}/${t.id}`,
       timestamp: t.updatedAt,
+      score,
+    })
+  }
+
+  // 검수 이력은 종류별로 라벨을 나눈다 — 산출물 설명인지 반려 사유인지가
+  // 결과를 훑을 때 가장 중요한 구분이기 때문(사용자 확인).
+  for (const r of taskReviews) {
+    const score = matchScore(q, r.body, null)
+    if (score === null) continue
+    results.push({
+      id: `taskReview:${r.id}`,
+      kind: 'taskReview',
+      label: REVIEW_SEARCH_LABELS[r.kind],
+      title: r.task.title,
+      snippet: buildSnippet(r.body, q),
+      meta: r.task.project.name,
+      link: `/tasks/${r.task.projectId}/${r.task.id}`,
+      timestamp: r.createdAt,
       score,
     })
   }

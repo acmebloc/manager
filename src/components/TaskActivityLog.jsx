@@ -7,13 +7,21 @@ function formatDateTime(value) {
 
 function describeActivity(a) {
   if (a.action === 'created') return `${a.actorName}님이 일감을 생성했습니다`
+  // 검수 이력의 텍스트는 불변이라, 산출물 파일이 바뀐 흔적은 이 로그에만 남는다
+  // (docs/task-review-spec.md 3장).
+  if (a.action === 'review_file_added') return `${a.actorName}님이 검수 산출물 파일을 등록했습니다 (${a.toLabel})`
+  if (a.action === 'review_file_removed') return `${a.actorName}님이 검수 산출물 파일을 삭제했습니다 (${a.fromLabel})`
   if (a.field === 'description') return `${a.actorName}님이 설명을 수정했습니다`
   return `${a.actorName}님이 ${a.fieldLabel}을(를) ${a.fromLabel ?? '(없음)'} → ${a.toLabel ?? '(없음)'}(으)로 변경했습니다`
 }
 
 // TaskComments/Comments.jsx와 동일한 패턴 — apiPath 자체를 props로 받는 대신
 // projectId/taskId로 조립하고, 자체 useEffect로 독립적으로 불러온다.
-function TaskActivityLog({ projectId, taskId }) {
+//
+// reloadKey는 상세페이지에서 상태를 바꿨을 때(=상태 변경이 로그에 한 줄 추가됐을
+// 때) 다시 읽게 하는 신호다. 이게 없으면 방금 내가 한 상태 변경만 로그에서
+// 빠져 보여서, 로그가 안 남는 것처럼 읽힌다.
+function TaskActivityLog({ projectId, taskId, reloadKey }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -33,7 +41,7 @@ function TaskActivityLog({ projectId, taskId }) {
     return () => {
       cancelled = true
     }
-  }, [projectId, taskId])
+  }, [projectId, taskId, reloadKey])
 
   if (loading) return null
 

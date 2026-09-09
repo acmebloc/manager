@@ -16,14 +16,20 @@ const FIELD_LABELS = {
   grade: '등급',
   status: '상태',
   assigneeId: '담당자',
+  reviewerId: '검수자',
   startAt: '시작일',
   endAt: '종료일',
   description: '설명',
   parentTaskId: '상위 일감',
+  // 검수 산출물 파일의 등록/삭제 기록(taskReviews.js) — 필드 변경이 아니라
+  // 자체 action('review_file_added'/'review_file_removed')을 쓰지만, from/toValue를
+  // 그대로 통과시키기 위해 field 이름을 하나 차지한다.
+  reviewFile: '검수 산출물',
 }
 
 function formatFieldValue(field, value, userNameById, taskTitleById) {
   if (field === 'assigneeId') return value ? userNameById.get(value) || '알 수 없음' : '미배정'
+  if (field === 'reviewerId') return value ? userNameById.get(value) || '알 수 없음' : '미지정'
   if (field === 'parentTaskId') return value ? taskTitleById.get(value) || '알 수 없음' : '없음'
   if (value === null || value === undefined) return null
   if (field === 'type') return taskTypeLabel(value)
@@ -46,12 +52,12 @@ router.get('/', requireProjectRole('member'), async (req, res) => {
     include: { actor: { select: userSelect } },
   })
 
-  // 담당자/상위일감 변경 이력에 등장하는 이름을 한 번에 조회 — 이미 프로젝트를
+  // 담당자/검수자/상위일감 변경 이력에 등장하는 이름을 한 번에 조회 — 이미 프로젝트를
   // 나갔거나 삭제된 대상이라도 과거 이력에는 등장할 수 있다.
   const referencedUserIds = new Set()
   const referencedTaskIds = new Set()
   for (const a of activities) {
-    if (a.field === 'assigneeId') {
+    if (a.field === 'assigneeId' || a.field === 'reviewerId') {
       if (a.fromValue) referencedUserIds.add(a.fromValue)
       if (a.toValue) referencedUserIds.add(a.toValue)
     }

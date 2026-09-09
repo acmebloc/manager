@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch } from '../lib/api'
+import { TASK_STATUSES, taskStatusLabel } from '../lib/taskFields'
 
 // 홈 = 소속 프로젝트나 할당된 일감이 없어도 볼 수 있는, 이 서비스가 뭘
 // 제공하는지 보여주는 개요판. "내 것" 위젯이 아니라 기능 안내 + 서비스
@@ -13,9 +14,10 @@ const FEATURES = [
   { to: '/mypage', title: '마이페이지', description: '프로필과 이메일 알림 설정을 관리합니다.' },
 ]
 
-const STATUS_ORDER = ['todo', 'doing', 'review', 'done']
-const STATUS_LABELS = { todo: '대기', doing: '진행중', review: '검토', done: '완료' }
-// 대기→진행중→검토→완료는 순서를 바꾸면 의미가 달라지는 진행 단계(ordinal)라,
+// 라벨은 taskFields.js 한 곳에서만 정한다 — 여기 자체 라벨 맵을 두었던 동안
+// review가 '검토'로 남아 다른 화면의 '검수중'과 어긋나 있었다.
+const STATUS_ORDER = TASK_STATUSES.map((s) => s.value)
+// 대기→진행중→검수중→완료는 순서를 바꾸면 의미가 달라지는 진행 단계(ordinal)라,
 // 서로 다른 색(범주형) 대신 파랑 한 가지 색조의 명도 단계로 순서를 표현한다.
 // 다크 모드는 어두운 배경에서 옅은 단계가 묻히지 않도록 명도 순서를 뒤집는다
 // (배경이 밝을 땐 옅은 색이, 어두울 땐 짙은 색이 표면에 묻힌다).
@@ -39,7 +41,7 @@ function TaskStatusBar({ counts, total }) {
           key={status}
           className={STATUS_COLORS[status]}
           style={{ flex: counts[status] }}
-          title={`${STATUS_LABELS[status]} ${counts[status]}개`}
+          title={`${taskStatusLabel(status)} ${counts[status]}개`}
         />
       ))}
     </div>
@@ -158,7 +160,7 @@ function DashboardPage() {
                     className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400"
                   >
                     <span className={`h-2 w-2 rounded-full ${STATUS_COLORS[status]}`} />
-                    {STATUS_LABELS[status]} {stats.tasksByStatus[status] ?? 0}
+                    {taskStatusLabel(status)} {stats.tasksByStatus[status] ?? 0}
                   </span>
                 ))}
               </div>

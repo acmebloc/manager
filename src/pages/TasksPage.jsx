@@ -1,13 +1,31 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { apiFetch } from '../lib/api'
-import { TASK_GRADES, TASK_STATUSES, TASK_TYPES, sortTasks } from '../lib/taskFields'
+import { TASK_GRADES, TASK_STATUSES, TASK_TYPES, sortTasks, taskStatusLabel } from '../lib/taskFields'
+import { submitStatusChange } from '../lib/taskReview'
 import { Avatar } from '../components/ProjectMembers'
+import TaskStatusDialog from '../components/TaskStatusDialog'
 import TaskTable from '../components/TaskTable'
 
 function formatDate(value) {
   if (!value) return null
   return new Date(value).toLocaleDateString('ko-KR')
+}
+
+// 상태 변경(PATCH) 응답은 상세페이지용이라 이 목록이 쓰지 않는 필드까지 실려온다.
+// 특히 description은 본문에 base64 이미지가 박힐 수 있어서 목록 API(/api/my-tasks)도
+// 애초에 안 내려주는 필드다 — 그대로 state에 넣으면 상태를 바꾼 일감마다 그만큼
+// 화면에 계속 물려 있게 된다. 새로 늘어나는 필드는 그냥 통과시키고, 무겁거나
+// 목록과 무관한 것만 덜어낸다(tasks.js의 GET / 이 쓰는 것과 같은 방식).
+function toListTask(updated) {
+  const {
+    description: _description,
+    followers: _followers,
+    parentTask: _parentTask,
+    createdReviewId: _createdReviewId,
+    ...rest
+  } = updated
+  return rest
 }
 
 function TaskCard({ task, draggable, onDragStart, onClick }) {
@@ -59,7 +77,7 @@ function TaskCard({ task, draggable, onDragStart, onClick }) {
 
 // 프로젝트 하나의 4단 칸반 보드 — 필터(전체 상태/내 일감만 보기)는 이 섹션
 // 안에서만 유효하다 (프로젝트마다 독립).
-function ProjectBoard({ section, onNavigateToTask, onMoveTask }) {
+function ProjectBoard({ section, onNavigateToTask, onRequestStatusChange }) {
   const [statusFilter, setStatusFilter] = useState('')
   const [myTasksOnly, setMyTasksOnly] = useState(false)
   const [dragOverStatus, setDragOverStatus] = useState(null)
@@ -128,7 +146,7 @@ function ProjectBoard({ section, onNavigateToTask, onMoveTask }) {
               e.preventDefault()
               const taskId = e.dataTransfer.getData('text/plain')
               setDragOverStatus(null)
-              onMoveTask(section.projectId, taskId, col.value)
+              onRequestStatusChange(section.projectId, taskId, col.value)
             }}
             className={`flex min-h-[200px] flex-col gap-2 rounded-lg p-2 ${
               dragOverStatus === col.value ? 'bg-indigo-50 dark:bg-indigo-950/30' : 'bg-gray-50 dark:bg-gray-800/50'
@@ -142,7 +160,10 @@ function ProjectBoard({ section, onNavigateToTask, onMoveTask }) {
                 <TaskCard
                   key={task.id}
                   task={task}
-                  draggable={task.canModify}
+                  // 완료된 일감은 canModify가 false지만 PM·등록자는 재오픈으로
+                  // 끌어낼 수 있어야 한다 — 그래서 드래그 가능 여부는
+                  // allowedTransitions로 판단한다.
+                  draggable={task.allowedTransitions?.length > 0}
                   onDragStart={(e) => e.dataTransfer.setData('text/plain', task.id)}
                   onClick={() => onNavigateToTask(section.projectId, task.id)}
                 />
@@ -165,6 +186,8 @@ function TasksPage() {
   // ?view=list로 들어오면 목록이 기본으로 켜진 상태로 보이게(공유 가능한
   // 링크) — 토글을 누를 때도 같은 파라미터를 반영해 새로고침해도 유지된다.
   const [view, setView] = useState(searchParams.get('view') === 'list' ? 'list' : 'board')
+  // 팝업이 필요한 전이를 기다리는 중 — { projectId, task, transition }
+  const [pendingChange, setPendingChange] = useState(null)
 
   const changeView = (next) => {
     setView(next)
@@ -201,32 +224,58 @@ function TasksPage() {
 
   const onNavigateToTask = (projectId, taskId) => navigate(`/tasks/${projectId}/${taskId}`)
 
-  const onMoveTask = async (projectId, taskId, status) => {
-    const section = sections.find((s) => s.projectId === projectId)
-    const task = section?.tasks.find((t) => t.id === taskId)
-    if (!task || task.status === status || !task.canModify) return
+  const applyTask = (projectId, taskId, updatedTask) =>
+    setSections((current) =>
+      current.map((s) =>
+        s.projectId === projectId ? { ...s, tasks: s.tasks.map((t) => (t.id === taskId ? updatedTask : t)) } : s,
+      ),
+    )
 
-    const applyTask = (updatedTask) =>
-      setSections((current) =>
-        current.map((s) =>
-          s.projectId === projectId
-            ? { ...s, tasks: s.tasks.map((t) => (t.id === taskId ? updatedTask : t)) }
-            : s,
-        ),
-      )
-
+  const moveTask = async (projectId, task, status) => {
     // 낙관적 업데이트 — 실패하면 되돌린다.
-    applyTask({ ...task, status })
+    applyTask(projectId, task.id, { ...task, status })
     try {
-      const updated = await apiFetch(`/api/projects/${projectId}/tasks/${taskId}`, {
-        method: 'PATCH',
-        body: { status },
-      })
-      applyTask(updated)
+      const { task: updated, uploadError } = await submitStatusChange(projectId, task.id, { status })
+      applyTask(projectId, task.id, toListTask(updated))
+      setError(uploadError)
     } catch (err) {
-      applyTask(task)
+      applyTask(projectId, task.id, task)
       setError(err.message)
     }
+  }
+
+  // 칸반 드래그와 목록 뷰의 상태 select가 공유하는 입구. 검수중으로 들어가거나
+  // 검수중에서 뒤로 나오는 전이는 팝업(검수 내용 / 반려 사유)을 먼저 띄우고,
+  // 나머지는 바로 처리한다(docs/task-review-spec.md 4장).
+  const onRequestStatusChange = (projectId, taskId, status) => {
+    const section = sections.find((s) => s.projectId === projectId)
+    const task = section?.tasks.find((t) => t.id === taskId)
+    if (!task || task.status === status) return
+
+    const transition = task.allowedTransitions?.find((t) => t.to === status)
+    if (!transition) {
+      setError(`"${task.title}"을(를) ${taskStatusLabel(task.status)}에서 ${taskStatusLabel(status)}(으)로는 바꿀 수 없어요`)
+      return
+    }
+    if (transition.requires === 'request' || transition.requires === 'reject') {
+      setPendingChange({ projectId, task, transition })
+      return
+    }
+    setError('')
+    moveTask(projectId, task, status)
+  }
+
+  // 팝업에서 온 제출은 에러를 삼키지 않는다 — 팝업이 잡아서 자기 안에 표시하고
+  // 열린 채로 남아야 입력한 내용을 잃지 않는다.
+  const submitPendingChange = async (payload) => {
+    const { projectId, task, transition } = pendingChange
+    const { task: updated, uploadError } = await submitStatusChange(projectId, task.id, {
+      status: transition.to,
+      ...payload,
+    })
+    applyTask(projectId, task.id, toListTask(updated))
+    setError(uploadError)
+    setPendingChange(null)
   }
 
   if (loading) return null
@@ -276,11 +325,26 @@ function TasksPage() {
             key={section.projectId}
             section={section}
             onNavigateToTask={onNavigateToTask}
-            onMoveTask={onMoveTask}
+            onRequestStatusChange={onRequestStatusChange}
           />
         ))
       ) : (
-        <TaskTable sections={sections} onNavigateToTask={onNavigateToTask} onMoveTask={onMoveTask} />
+        <TaskTable
+          sections={sections}
+          onNavigateToTask={onNavigateToTask}
+          onRequestStatusChange={onRequestStatusChange}
+        />
+      )}
+
+      {pendingChange && (
+        <TaskStatusDialog
+          projectId={pendingChange.projectId}
+          task={pendingChange.task}
+          requires={pendingChange.transition.requires}
+          toStatus={pendingChange.transition.to}
+          onCancel={() => setPendingChange(null)}
+          onSubmit={submitPendingChange}
+        />
       )}
     </div>
   )

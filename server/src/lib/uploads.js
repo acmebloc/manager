@@ -84,24 +84,24 @@ export const taskImportUpload = multer({
   limits: { fileSize: MAX_ATTACHMENT_SIZE, files: 1 },
 })
 
+// 파일 하나를 지우고, 실패하면 로그만 남긴다 — **절대 던지지 않는다.**
+//
+// 라우트에서 디스크 파일 삭제는 늘 "DB는 이미 반영됐고 남은 파일만 치우는"
+// 후처리다. 여기서 던지면 Express 4가 라우트 핸들러를 await하지 않는 탓에
+// 에러 응답이 아니라 응답 없는 멈춤이 되고(index.js 주석), 사용자는 다시
+// 눌러도 이미 지워진 행 때문에 404만 받는다. 권한 오류·디스크 문제로 남은
+// 고아 파일은 로그로 추적하는 쪽이 낫다.
 export async function deleteAttachmentFile(storageKey) {
   try {
     await fs.unlink(path.join(TASK_UPLOAD_DIR, storageKey))
   } catch (err) {
-    if (err.code !== 'ENOENT') throw err
+    // 이미 없는 파일은 실패가 아니다 — 지우려던 상태가 이미 달성돼 있다.
+    if (err.code === 'ENOENT') return
+    console.error(`Failed to delete attachment file ${storageKey}:`, err)
   }
 }
 
-// Best-effort bulk cleanup for task/project deletion (spec §5.4) — one
-// unexpected filesystem error (permission denied, disk full) must not blow
-// up the whole delete request, since Express 4 has no global async-error
-// handler here and an unhandled rejection would take the process down.
+// Bulk cleanup for task/project deletion (spec §5.4).
 export async function deleteAttachmentFiles(storageKeys) {
-  await Promise.all(
-    storageKeys.map((storageKey) =>
-      deleteAttachmentFile(storageKey).catch((err) => {
-        console.error(`Failed to delete attachment file ${storageKey}:`, err)
-      }),
-    ),
-  )
+  await Promise.all(storageKeys.map((storageKey) => deleteAttachmentFile(storageKey)))
 }

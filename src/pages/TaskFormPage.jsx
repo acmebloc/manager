@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch } from '../lib/api'
-import { TASK_GRADES, TASK_STATUSES, TASK_TYPES } from '../lib/taskFields'
+import { statusOptions, TASK_GRADES, TASK_TYPES, taskStatusLabel } from '../lib/taskFields'
+import { submitStatusChange } from '../lib/taskReview'
+import { FollowerList, FollowerPicker } from '../components/FollowerPicker'
 import { Avatar } from '../components/ProjectMembers'
 import MarkdownContent from '../components/MarkdownContent'
 import MarkdownEditor from '../components/MarkdownEditor'
@@ -10,21 +12,27 @@ import TaskAttachments from '../components/TaskAttachments'
 import TaskChecklist from '../components/TaskChecklist'
 import TaskComments from '../components/TaskComments'
 import TaskLinks from '../components/TaskLinks'
+import TaskReviewHistory from '../components/TaskReviewHistory'
+import TaskStatusDialog from '../components/TaskStatusDialog'
 import TaskSubtasks from '../components/TaskSubtasks'
 
 const EMPTY_LINKS = { related: [] }
 
+// status는 draft에 없다 — 상태는 폼에 담아 저장하는 값이 아니라 그 자리에서
+// 바꾸는 값이고, 수정 폼에 두면 검수요청/반려 팝업 절차를 우회하는 경로가 된다
+// (docs/task-review-spec.md 4장).
 const EMPTY_DRAFT = {
   title: '',
   description: '',
   type: 'plan',
   grade: 'minor',
-  status: 'todo',
   assigneeId: '',
+  reviewerId: '',
   startAt: '',
   endAt: '',
   parentTask: null,
   relatedTasks: [],
+  followers: [],
 }
 
 function toDateInputValue(value) {
@@ -38,29 +46,37 @@ function formatDate(value) {
 
 // links는 마지막으로 불러오거나 저장된 연결일감 — 편집 중 선택을 취소했을 때
 // 되돌아갈 기준점이라 draft와 분리해서 들고 있는다(TaskFormPage 참고).
-// parentTask는 연결일감과 달리 task 자체에 실려온다(GET /:id의 taskDetailInclude).
+// parentTask/followers는 연결일감과 달리 task 자체에 실려온다(GET /:id).
 function draftFromTask(task, links = EMPTY_LINKS) {
   return {
     title: task.title,
     description: task.description || '',
     type: task.type,
     grade: task.grade,
-    status: task.status,
     assigneeId: task.assigneeId || '',
+    reviewerId: task.reviewerId || '',
     startAt: toDateInputValue(task.startAt),
     endAt: toDateInputValue(task.endAt),
     parentTask: task.parentTask || null,
     relatedTasks: links.related,
+    followers: task.followers || [],
   }
 }
 
 // 새 담당자를 지정할 때는 프로젝트 멤버여야 하지만(서버가 강제), 이미 나간
 // 담당자를 그대로 유지하는 경우까지 select에서 사라지면 안 되므로(스펙 4.4)
 // 현재 담당자가 멤버 목록에 없어도 옵션에 끼워 넣는다.
-function buildAssigneeOptions(members, task) {
-  const options = [{ value: '', label: '미배정' }, ...members.map((m) => ({ value: m.id, label: m.name }))]
-  if (task?.assigneeId && task.assignee && !members.some((m) => m.id === task.assigneeId)) {
-    options.push({ value: task.assigneeId, label: `${task.assignee.name} (프로젝트 미참여)` })
+//
+// `excludeUserId`로 상대 역할(담당자↔검수자)에 이미 배정된 사람을 목록에서
+// 뺀다 — 담당자와 검수자는 같은 사람일 수 없고(서버도 막는다), 애초에 고를 수
+// 없게 하는 쪽이 저장 후 에러를 보는 것보다 낫다.
+function buildPersonOptions(members, current, emptyLabel, excludeUserId) {
+  const options = [
+    { value: '', label: emptyLabel },
+    ...members.filter((m) => m.id !== excludeUserId).map((m) => ({ value: m.id, label: m.name })),
+  ]
+  if (current?.id && current.id !== excludeUserId && !members.some((m) => m.id === current.id)) {
+    options.push({ value: current.id, label: `${current.name} (프로젝트 미참여)` })
   }
   return options
 }
@@ -82,6 +98,11 @@ function TaskFormPage() {
   const [draft, setDraft] = useState(EMPTY_DRAFT)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  // 상태가 바뀌면 검수 이력과 활동 로그를 새로 불러와야 한다 — 둘 다 자체
+  // fetch를 하는 컴포넌트라 이 키를 올려 다시 읽게 한다.
+  const [reloadKey, setReloadKey] = useState(0)
+  const [statusUpdating, setStatusUpdating] = useState(false)
+  const [pendingTransition, setPendingTransition] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -135,7 +156,14 @@ function TaskFormPage() {
 
   const memberUsers = useMemo(() => members.map((m) => m.user), [members])
   const mentionUsersById = useMemo(() => new Map(memberUsers.map((m) => [m.id, m])), [memberUsers])
-  const assigneeOptions = useMemo(() => buildAssigneeOptions(memberUsers, task), [memberUsers, task])
+  const assigneeOptions = useMemo(
+    () => buildPersonOptions(memberUsers, task?.assignee, '미배정', draft.reviewerId || null),
+    [memberUsers, task, draft.reviewerId],
+  )
+  const reviewerOptions = useMemo(
+    () => buildPersonOptions(memberUsers, task?.reviewer, '미지정', draft.assigneeId || null),
+    [memberUsers, task, draft.assigneeId],
+  )
 
   const dateProblem = draft.startAt && draft.endAt && draft.startAt > draft.endAt ? '시작일은 종료일보다 늦을 수 없습니다' : ''
 
@@ -181,11 +209,12 @@ function TaskFormPage() {
         type: draft.type,
         grade: draft.grade,
         assigneeId: draft.assigneeId || null,
+        reviewerId: draft.reviewerId || null,
         startAt: draft.startAt || null,
         endAt: draft.endAt || null,
-        ...(isNew ? {} : { status: draft.status }),
         parentTaskId: draft.parentTask?.id || null,
         relatedTaskIds: newLinks.related.map((t) => t.id),
+        followerIds: draft.followers.map((f) => f.id),
       }
       if (isNew) {
         const created = await apiFetch(`/api/projects/${projectId}/tasks`, { method: 'POST', body })
@@ -218,27 +247,48 @@ function TaskFormPage() {
     }
   }
 
-  // Status alone is editable straight from the read view — matching the
-  // kanban board's drag-to-change-status, no need to enter the full edit form.
-  // Guarded against overlapping requests: without it, quickly picking two
-  // statuses in a row could let the first (slower) response land after the
-  // second and silently revert the value the user actually chose.
-  const [statusUpdating, setStatusUpdating] = useState(false)
-  const updateStatus = async (status) => {
+  // 상태는 조회 화면에서만 바꾼다(수정 폼에는 상태 필드가 없다) — 칸반의
+  // 드래그와 같은 흐름이고, 어떤 전이가 가능한지는 서버가 계산해준
+  // task.allowedTransitions가 정한다.
+  const applyUpdatedTask = (updated) => {
+    setTask(updated)
+    // 검수요청은 검수자까지 함께 바꾸므로 draft도 다시 맞춘다. 이 경로는 조회
+    // 모드에서만 도달하므로 편집 중인 입력을 덮어쓸 일은 없다.
+    setDraft(draftFromTask(updated, links))
+    setReloadKey((k) => k + 1)
+  }
+
+  const requestStatusChange = async (nextStatus) => {
+    const transition = task.allowedTransitions?.find((t) => t.to === nextStatus)
+    if (!transition) return
+    // 검수중으로 들어갈 때는 검수요청 팝업, 검수중에서 뒤로 나올 때는 반려사유
+    // 팝업. 그 외(진행 시작·최종완료·재오픈)는 확인 없이 바로 처리한다.
+    if (transition.requires === 'request' || transition.requires === 'reject') {
+      setPendingTransition(transition)
+      return
+    }
     setStatusUpdating(true)
     try {
-      const updated = await apiFetch(`/api/projects/${projectId}/tasks/${taskId}`, {
-        method: 'PATCH',
-        body: { status },
-      })
-      setTask(updated)
-      setDraft((d) => ({ ...d, status: updated.status }))
-      setError('')
+      const { task: updated, uploadError } = await submitStatusChange(projectId, taskId, { status: nextStatus })
+      applyUpdatedTask(updated)
+      setError(uploadError)
     } catch (err) {
       setError(err.message)
     } finally {
       setStatusUpdating(false)
     }
+  }
+
+  // 팝업에서 온 제출은 에러를 삼키지 않고 그대로 던진다 — 팝업이 스스로 잡아
+  // 자기 안에 표시하고 열린 채로 남는다(입력한 내용을 잃지 않게).
+  const submitPendingTransition = async (payload) => {
+    const { task: updated, uploadError } = await submitStatusChange(projectId, taskId, {
+      status: pendingTransition.to,
+      ...payload,
+    })
+    applyUpdatedTask(updated)
+    setError(uploadError)
+    setPendingTransition(null)
   }
 
   const remove = async () => {
@@ -260,6 +310,31 @@ function TaskFormPage() {
       </div>
     )
   }
+
+  // 관계일감(상위/하위/연결)은 조회·편집 양쪽에서 완전히 같은 모양이라 한 번만
+  // 만들어 두고, 편집 중에는 폼 안(저장 버튼 위)에, 조회 중에는 체크리스트
+  // 다음 자리에 끼워 넣는다 — 상세페이지의 배치 순서가 스펙 9장에 정해져 있다.
+  const relationSections = (
+    <div className="flex flex-col gap-3">
+      <TaskSubtasks
+        projectId={projectId}
+        taskId={taskId}
+        editing={editing}
+        candidates={linkCandidates}
+        parentTask={draft.parentTask}
+        onParentChange={setParentTask}
+        subtasks={subtasks}
+        onSubtasksChange={setSubtasks}
+      />
+      <TaskLinks
+        projectId={projectId}
+        editing={editing}
+        candidates={linkCandidates}
+        related={draft.relatedTasks}
+        onChange={setLinkField}
+      />
+    </div>
+  )
 
   return (
     <div className="mx-auto w-full max-w-[1400px] px-4 py-8">
@@ -286,7 +361,7 @@ function TaskFormPage() {
             className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium dark:border-gray-600 dark:bg-gray-800 dark:text-white"
           />
 
-          <div className={`grid gap-2 ${isNew ? 'grid-cols-2' : 'grid-cols-3'}`}>
+          <div className="grid grid-cols-2 gap-2">
             <label className="text-xs text-gray-500 dark:text-gray-400">
               유형
               <select
@@ -315,38 +390,41 @@ function TaskFormPage() {
                 ))}
               </select>
             </label>
-            {!isNew && (
-              <label className="text-xs text-gray-500 dark:text-gray-400">
-                상태
-                <select
-                  value={draft.status}
-                  onChange={(e) => setDraft((d) => ({ ...d, status: e.target.value }))}
-                  className="mt-1 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-                >
-                  {TASK_STATUSES.map((s) => (
-                    <option key={s.value} value={s.value}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
           </div>
 
-          <label className="text-xs text-gray-500 dark:text-gray-400">
-            담당자
-            <select
-              value={draft.assigneeId}
-              onChange={(e) => setDraft((d) => ({ ...d, assigneeId: e.target.value }))}
-              className="mt-1 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-            >
-              {assigneeOptions.map((o) => (
-                <option key={o.value || 'none'} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="text-xs text-gray-500 dark:text-gray-400">
+              담당자
+              <select
+                value={draft.assigneeId}
+                onChange={(e) => setDraft((d) => ({ ...d, assigneeId: e.target.value }))}
+                className="mt-1 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+              >
+                {assigneeOptions.map((o) => (
+                  <option key={o.value || 'none'} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs text-gray-500 dark:text-gray-400">
+              검수자
+              <select
+                value={draft.reviewerId}
+                onChange={(e) => setDraft((d) => ({ ...d, reviewerId: e.target.value }))}
+                className="mt-1 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+              >
+                {reviewerOptions.map((o) => (
+                  <option key={o.value || 'none'} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <p className="text-xs text-gray-400 dark:text-gray-500">
+            담당자와 검수자는 같은 사람으로 지정할 수 없어요 — 한쪽에 배정된 사람은 다른 쪽 목록에서 빠집니다.
+          </p>
 
           <div className="flex gap-2">
             <label className="flex-1 text-xs text-gray-500 dark:text-gray-400">
@@ -381,6 +459,17 @@ function TaskFormPage() {
             </p>
           )}
 
+          {/* 참조자는 전체 폭을 쓰는 별도의 줄 — 여러 명이 칩으로 쌓여 옆 필드와
+              나란히 두면 줄 높이가 들쭉날쭉해진다. */}
+          <div>
+            <p className="mb-1 text-xs text-gray-500 dark:text-gray-400">참조자</p>
+            <FollowerPicker
+              members={memberUsers}
+              followers={draft.followers}
+              onChange={(followers) => setDraft((d) => ({ ...d, followers }))}
+            />
+          </div>
+
           <div>
             {/* Not a <label> — it would wrap the editor's own toolbar buttons,
                 and a label's click-forwarding to its first focusable control
@@ -397,25 +486,7 @@ function TaskFormPage() {
             </div>
           </div>
 
-          <div className="flex flex-col gap-3">
-            <TaskSubtasks
-              projectId={projectId}
-              taskId={taskId}
-              editing={editing}
-              candidates={linkCandidates}
-              parentTask={draft.parentTask}
-              onParentChange={setParentTask}
-              subtasks={subtasks}
-              onSubtasksChange={setSubtasks}
-            />
-            <TaskLinks
-              projectId={projectId}
-              editing={editing}
-              candidates={linkCandidates}
-              related={draft.relatedTasks}
-              onChange={setLinkField}
-            />
-          </div>
+          {relationSections}
 
           {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
           <div className="flex gap-2">
@@ -471,14 +542,16 @@ function TaskFormPage() {
             <span className="rounded-full bg-gray-100 px-2 py-0.5 text-gray-600 dark:bg-gray-700 dark:text-gray-300">
               {TASK_GRADES.find((g) => g.value === task.grade)?.label}
             </span>
-            {task.canModify ? (
+            {/* 갈 수 있는 상태만 옵션으로 뜬다 — 어떤 전이가 가능한지는 역할과
+                현재 상태에 따라 서버가 계산해서 내려준다(allowedTransitions). */}
+            {task.allowedTransitions?.length > 0 ? (
               <select
                 value={task.status}
-                onChange={(e) => updateStatus(e.target.value)}
+                onChange={(e) => requestStatusChange(e.target.value)}
                 disabled={statusUpdating}
                 className="rounded-full border border-gray-200 bg-gray-100 px-2 py-0.5 text-gray-600 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300"
               >
-                {TASK_STATUSES.map((s) => (
+                {statusOptions(task.status, task.allowedTransitions).map((s) => (
                   <option key={s.value} value={s.value}>
                     {s.label}
                   </option>
@@ -486,10 +559,19 @@ function TaskFormPage() {
               </select>
             ) : (
               <span className="rounded-full bg-gray-100 px-2 py-0.5 text-gray-600 dark:bg-gray-700 dark:text-gray-300">
-                {TASK_STATUSES.find((s) => s.value === task.status)?.label}
+                {taskStatusLabel(task.status)}
               </span>
             )}
           </div>
+
+          {/* 완료된 일감은 통째로 잠긴다 — 수정 버튼이 사라지는 이유를 알려주지
+              않으면 버그로 읽힌다(docs/task-review-spec.md 8장). */}
+          {task.status === 'done' && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              완료된 일감은 수정할 수 없어요. 내용을 고쳐야 하면 PM 또는 등록자가 상태를 진행중으로 되돌려주세요(댓글은 계속
+              쓸 수 있어요).
+            </p>
+          )}
 
           {task.description && <MarkdownContent text={task.description} mentionUsersById={mentionUsersById} />}
 
@@ -509,6 +591,20 @@ function TaskFormPage() {
               </dd>
             </div>
             <div>
+              <dt className="mb-1">검수자</dt>
+              <dd className="flex items-center gap-1.5">
+                {task.reviewer ? (
+                  <span className={`flex items-center gap-1.5 ${!task.reviewerIsMember ? 'opacity-50' : ''}`}>
+                    <Avatar user={task.reviewer} />
+                    {task.reviewer.name}
+                    {!task.reviewerIsMember && ' (프로젝트 미참여)'}
+                  </span>
+                ) : (
+                  '미지정'
+                )}
+              </dd>
+            </div>
+            <div>
               <dt className="mb-1">등록자</dt>
               <dd>{task.createdBy?.name || '등록자 미상'}</dd>
             </div>
@@ -524,24 +620,9 @@ function TaskFormPage() {
             </div>
           </dl>
 
-          <div className="flex flex-col gap-3">
-            <TaskSubtasks
-              projectId={projectId}
-              taskId={taskId}
-              editing={editing}
-              candidates={linkCandidates}
-              parentTask={draft.parentTask}
-              onParentChange={setParentTask}
-              subtasks={subtasks}
-              onSubtasksChange={setSubtasks}
-            />
-            <TaskLinks
-              projectId={projectId}
-              editing={editing}
-              candidates={linkCandidates}
-              related={draft.relatedTasks}
-              onChange={setLinkField}
-            />
+          <div>
+            <p className="mb-1 text-xs text-gray-500 dark:text-gray-400">참조자</p>
+            <FollowerList followers={task.followers || []} />
           </div>
 
           {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
@@ -552,16 +633,32 @@ function TaskFormPage() {
         <>
           <hr className="my-4 border-gray-100 dark:border-gray-800" />
           <div className="mb-4">
+            <TaskReviewHistory projectId={projectId} taskId={taskId} reloadKey={reloadKey} />
+          </div>
+          <div className="mb-4">
             <TaskChecklist projectId={projectId} taskId={taskId} canModify={task.canModify} />
           </div>
+          {!editing && <div className="mb-4">{relationSections}</div>}
           <div className="mb-4">
             <TaskAttachments projectId={projectId} taskId={taskId} canModify={task.canModify} />
           </div>
           <hr className="my-4 border-gray-100 dark:border-gray-800" />
           <TaskComments projectId={projectId} taskId={taskId} members={memberUsers} />
           <hr className="my-4 border-gray-100 dark:border-gray-800" />
-          <TaskActivityLog projectId={projectId} taskId={taskId} />
+          <TaskActivityLog projectId={projectId} taskId={taskId} reloadKey={reloadKey} />
         </>
+      )}
+
+      {pendingTransition && (
+        <TaskStatusDialog
+          projectId={projectId}
+          task={task}
+          members={memberUsers}
+          requires={pendingTransition.requires}
+          toStatus={pendingTransition.to}
+          onCancel={() => setPendingTransition(null)}
+          onSubmit={submitPendingTransition}
+        />
       )}
     </div>
   )

@@ -30,7 +30,17 @@ function nextScanAt(now = new Date()) {
   return scanInstant > now ? scanInstant : new Date(scanInstant.getTime() + DAY_MS)
 }
 
-// endAt이 "오늘부터 +3일"(D-3~D-day) 사이에 들어오고, 완료되지 않았고 담당자가
+const personSelect = { id: true, name: true, email: true, picture: true, deactivatedAt: true }
+
+// 리마인더는 지금 "공을 들고 있는 사람"에게 간다 — 검수중이면 검수자, 그 외에는
+// 담당자다(docs/task-review-spec.md 5장). 검수중인데 검수자가 없는 옛 데이터는
+// 담당자에게 그대로 보낸다(아무에게도 안 가는 것보다 낫다).
+function reminderRecipient(task) {
+  if (task.status === 'review' && task.reviewerId) return { userId: task.reviewerId, user: task.reviewer }
+  return { userId: task.assigneeId, user: task.assignee }
+}
+
+// endAt이 "오늘부터 +3일"(D-3~D-day) 사이에 들어오고, 완료되지 않았고 받을 사람이
 // 있는 일감을 매일 훑는다. `dueReminderLastDaysLeft`에 "마지막으로 보낸 날의
 // 남은 일수"를 저장해두고, 오늘 계산한 남은 일수와 다르면(=오늘 치를 아직 안
 // 보냈으면) 보낸다 — 그래서 D-3/D-2/D-1/D-day에 각각 한 번씩, 한 일감당 최대
@@ -46,7 +56,11 @@ export async function runDueReminderScan(now = new Date()) {
     where: {
       endAt: { gte: rangeStart, lte: rangeEnd },
       status: { not: 'done' },
-      assigneeId: { not: null },
+      // 아래 reminderRecipient가 받을 사람을 찾아내는 경우와 정확히 같은
+      // 집합이다 — 담당자가 있거나, 검수중이면서 검수자가 있는 일감. 조건을
+      // 느슨하게 잡으면(예: reviewerId만 있는 대기 일감) 읽어온 뒤 그냥 버리는
+      // 행이 생기고, 조건과 recipient 함수가 서로 어긋나기 쉬워진다.
+      OR: [{ assigneeId: { not: null } }, { status: 'review', reviewerId: { not: null } }],
       // 프로젝트가 보관되면 리마인더도 멈춘다 — 대시보드/일정 목록과 동일하게
       // 취급(archivedAt: null 필터 없이는 보관 후에도 계속 메일이 나감).
       project: { archivedAt: null },
@@ -55,29 +69,36 @@ export async function runDueReminderScan(now = new Date()) {
       id: true,
       projectId: true,
       title: true,
+      status: true,
       assigneeId: true,
+      reviewerId: true,
       endAt: true,
       dueReminderLastDaysLeft: true,
       project: { select: { name: true } },
-      assignee: { select: { id: true, name: true, email: true, picture: true, deactivatedAt: true } },
+      assignee: { select: personSelect },
+      reviewer: { select: personSelect },
     },
   })
 
   for (const task of tasks) {
     const daysLeft = kstDayIndex(task.endAt) - todayIndex
     if (daysLeft === task.dueReminderLastDaysLeft) continue
+    const { userId, user } = reminderRecipient(task)
+    // 위 where와 이 함수가 같은 집합을 보므로 여기서 걸릴 일은 없지만, 둘이
+    // 어긋나면 decryptUser(null)로 스캔 전체가 죽으니 방어는 남겨둔다.
+    if (!userId) continue
     try {
       const link = `/tasks/${task.projectId}/${task.id}`
       const message = `"${task.project.name}", "${task.title}" 일감이 마감일까지 ${daysLeft}일 남았어요. 꼭 확인 부탁드려요.`
       await createNotification({
-        userId: task.assigneeId,
+        userId,
         type: 'task_due_soon',
         title: message,
         link,
       })
-      if (await wantsEmailNotifications(task.assigneeId)) {
+      if (await wantsEmailNotifications(userId)) {
         await notifyDueSoon({
-          to: decryptUser(task.assignee).email,
+          to: decryptUser(user).email,
           projectName: task.project.name,
           taskTitle: task.title,
           link,
