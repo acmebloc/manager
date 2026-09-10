@@ -8,6 +8,7 @@ import {
   TASK_STATUSES,
 } from '../lib/taskFields'
 import { Avatar } from './ProjectMembers'
+import TaskRelationBadges from './TaskRelationBadges'
 
 function formatDate(value) {
   if (!value) return null
@@ -152,7 +153,16 @@ function TaskTable({ sections, onNavigateToTask, onRequestStatusChange }) {
                     onClick={() => onNavigateToTask(group.projectId, task.id)}
                     className="cursor-pointer border-t border-gray-100 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800/50"
                   >
-                    <td className="px-3 py-2 font-medium text-gray-900 dark:text-white">{task.title}</td>
+                    <td className="px-3 py-2">
+                      <span className="font-medium text-gray-900 dark:text-white">{task.title}</span>
+                      {/* 관계 배지는 제목 아래 한 줄로 — 컬럼을 새로 늘리면 좁은
+                          화면에서 다른 컬럼이 밀린다(2026-09-07에 이미 겪음). */}
+                      {(task.subtasks?.length > 0 || task.blockedByOpenCount > 0) && (
+                        <span className="mt-0.5 flex text-xs text-gray-400 dark:text-gray-500">
+                          <TaskRelationBadges task={task} />
+                        </span>
+                      )}
+                    </td>
                     <td className="whitespace-nowrap px-3 py-2">
                       <span className={pillClassName}>{taskTypeLabel(task.type)}</span>
                     </td>

@@ -27,6 +27,7 @@ import {
   isValidTaskType,
 } from '../lib/taskFields.js'
 import { canDeleteTask, canModifyTask, taskPermissionFlags, taskRoles } from '../lib/taskPermissions.js'
+import { findBlockingCycle } from '../lib/taskRelations.js'
 import { buildReviewPayload } from '../lib/taskReview.js'
 import { resolveTransition } from '../lib/taskTransitions.js'
 import { deleteAttachmentFiles, taskImportUpload } from '../lib/uploads.js'
@@ -46,18 +47,29 @@ const taskInclude = {
   // 맞춰둔다.
   _count: { select: { attachments: { where: { reviewId: null } }, comments: true } },
   checklistItems: { select: { done: true } },
+  // 목록·보드의 관계 배지용(docs/task-relations-spec.md 3장). 상태만 뽑는
+  // 가벼운 조인이라 바로 위 checklistItems와 같은 비용이다 — "칸반 카드에는
+  // 진행률 배지를 붙이지 않는다"던 2026-09-07의 v1 결정을 이 근거로 뒤집었다.
+  //
+  // linksTo는 이 일감으로 **들어오는** 링크(toTaskId === 나)다. type='blocks'에서
+  // 그건 곧 "나를 막는 선행 일감"이다(스키마 주석의 방향 정의 참고). 응답에는
+  // 이 배열을 그대로 내보내지 않고 decryptTask가 미완료 개수만 세서 내려준다.
+  subtasks: { select: { status: true } },
+  linksTo: { where: { type: 'blocks' }, select: { fromTask: { select: { status: true } } } },
 }
 
 // 검수자·상위 일감·참조자 — POST/PATCH가 응답을 만들 때 쓴다. 상세페이지가
-// 취소 시 draftFromTask로 되돌아갈 기준을 다시 잡으려면 셋 다 필요하지만,
-// subtasks(하위 작업 목록 전체)는 이 두 경로에서 실제로 쓰이지 않는다 —
-// 하위 작업은 TaskSubtasks.jsx가 자식 쪽에 직접 PATCH해서 로컬 state로만
-// 관리하고, "내 필드"를 바꾸는 이 요청으로는 절대 바뀌지 않기 때문이다.
+// 취소 시 draftFromTask로 되돌아갈 기준을 다시 잡으려면 셋 다 필요하다.
 //
-// 이 셋을 목록/보드용 taskInclude에 넣지 않는 이유는 같다: 칸반과 목록 뷰는
-// 검수자 이름도 참조자도 보여주지 않는데, 넣으면 일감 하나마다 조인이 늘고
-// 이름·이메일 복호화(fieldCrypto.js의 실제 AES 연산)까지 매번 돌게 된다.
-// 권한 판정에 필요한 건 스칼라 reviewerId뿐이고 그건 항상 실려온다.
+// 이 셋을 목록/보드용 taskInclude에 넣지 않는 이유: 칸반과 목록 뷰는 검수자
+// 이름도 참조자도 보여주지 않는데, 넣으면 일감 하나마다 조인이 늘고 이름·이메일
+// 복호화(fieldCrypto.js의 실제 AES 연산)까지 매번 돌게 된다. 권한 판정에 필요한
+// 건 스칼라 reviewerId뿐이고 그건 항상 실려온다.
+//
+// subtasks는 taskInclude에서 상태만 담긴 가벼운 형태로 이미 상속된다 — 이
+// 경로에서 하위 작업 목록 자체를 쓰지는 않지만(TaskSubtasks.jsx가 자식 쪽에
+// 직접 PATCH해서 로컬 state로 관리한다), 칸반이 상태 변경 후 응답으로 카드를
+// 갈아끼울 때 진행률 배지가 사라지지 않으려면 그 값이 같이 와야 한다.
 const taskWriteInclude = {
   ...taskInclude,
   reviewer: { select: userSelect },
@@ -65,9 +77,10 @@ const taskWriteInclude = {
   followers: { select: { user: { select: userSelect } } },
 }
 
-// GET /:id 전용 — 상위/하위 일감을 전부 보여줘야 하는 유일한 곳이라 subtasks
-// 목록 전체(무게가 있음)를 여기서만 포함한다. v1 스코프: 칸반 카드/테이블
-// 행에는 진행률 배지를 붙이지 않고, 상세페이지에서만 계층을 보여준다.
+// GET /:id 전용 — 하위 작업의 제목·담당자까지 보여줘야 하는 유일한 곳이라
+// subtasks를 여기서만 풍부한 형태로 덮어쓴다(taskInclude의 가벼운 상태-only
+// 버전을 스프레드 순서상 이 값이 이긴다). 목록·보드는 그 가벼운 버전으로
+// 진행률 배지만 그린다.
 const taskDetailInclude = {
   ...taskWriteInclude,
   subtasks: { select: { ...linkTaskSelect, assignee: { select: userSelect } } },
@@ -79,8 +92,15 @@ const taskDetailInclude = {
 // it as plain booleans, the same way projects.js already hands back `myRole`
 // instead of making the client re-derive it.
 function decryptTask(task, memberIds, user, projectAccess) {
+  // linksTo는 "미완료 선행 일감 수"를 세기 위한 내부 조회용이다 — 방향 정보가
+  // 벗겨진 링크 배열을 그대로 내보내면 상세페이지가 GET /:id/links에서 받는
+  // 풍부한 선행 목록과 이름만 비슷하고 모양이 달라 헷갈린다. 숫자만 내보낸다.
+  const { linksTo, ...taskFields } = task
   return {
-    ...task,
+    ...taskFields,
+    ...(linksTo && {
+      blockedByOpenCount: linksTo.filter((l) => l.fromTask.status !== 'done').length,
+    }),
     assignee: task.assignee ? decryptUser(task.assignee) : null,
     createdBy: task.createdBy ? decryptUser(task.createdBy) : null,
     // 검수자는 taskWriteInclude/taskDetailInclude에서만 실려온다(위 주석 참고) —
@@ -94,10 +114,14 @@ function decryptTask(task, memberIds, user, projectAccess) {
     // taskWriteInclude/taskDetailInclude에서만 존재 — 조인 테이블 모양을 벗기고
     // 사용자 배열로 평평하게 내려준다(일정의 참조자와 같은 형태).
     ...(task.followers && { followers: task.followers.map((f) => decryptUser(f.user)) }),
-    // GET /:id에서만 존재(taskDetailInclude) — subtasks의 assignee도 다른
-    // user 객체와 동일하게 복호화를 거쳐야 한다.
+    // subtasks는 두 형태로 온다: 상세는 담당자까지 실린 풍부한 형태
+    // (taskDetailInclude), 목록·보드는 상태만 담긴 가벼운 형태(taskInclude).
+    // 'assignee' 키가 있는지로 구분한다 — 무조건 매핑하면 가벼운 형태에도
+    // assignee: null이 붙어 목록 응답에 쓰지 않는 필드가 늘어난다.
     ...(task.subtasks && {
-      subtasks: task.subtasks.map((s) => ({ ...s, assignee: s.assignee ? decryptUser(s.assignee) : null })),
+      subtasks: task.subtasks.map((s) =>
+        'assignee' in s ? { ...s, assignee: s.assignee ? decryptUser(s.assignee) : null } : s,
+      ),
     }),
     ...taskPermissionFlags(task, user, projectAccess),
   }
@@ -143,16 +167,25 @@ async function sameProjectTaskIds(projectId, taskId, ids) {
   return found.map((t) => t.id)
 }
 
-// Purely relational — no functional coupling: changing a linked task's
-// status/fields never touches this task. Symmetric, so it's stored once but
-// read from either side. (부모/자식 표시는 예전에 이 테이블의 'parent' 타입이었지만
-// 실제 기능이 있는 Task.parentTaskId 계층으로 대체됐다 — 이제 이 함수는 'related'만
-// 다룬다.)
+// 연결 일감(related)과 선행 일감(blocks)을 저장한다. 둘 다 상태에는 관여하지
+// 않는다 — 연결된 일감의 상태/필드가 바뀌어도 이 일감은 건드려지지 않는다
+// (docs/task-relations-spec.md 4장).
+//
+// 두 타입의 **방향 취급이 다르다는 게 핵심**이다:
+//   related — 대칭. 한 쌍당 한 행만 두므로 이 일감을 건드리는 양방향 행을 전부
+//             지우고 이쪽 기준으로 다시 만든다.
+//   blocks  — 방향이 의미를 가진다. 이 화면에서 관리하는 건 "이 일감으로 들어오는"
+//             간선(= 선행 일감)뿐이라 그것만 교체하고, 나가는 간선(= 후행 일감)은
+//             건드리지 않는다. 후행은 읽기 전용이고 그쪽 일감 화면에서 자기
+//             선행을 고쳐서 바꾼다(spec 2장).
+//
+// (부모/자식 표시는 예전에 이 테이블의 'parent' 타입이었지만 실제 기능이 있는
+// Task.parentTaskId 계층으로 대체됐다.)
 //
 // Delete+recreate runs inside one transaction so a save never leaves links in
 // a transiently-empty (or partially applied) state if a later step in the
 // same request fails.
-async function applyTaskLinks(projectId, taskId, { relatedTaskIds }) {
+async function applyTaskLinks(projectId, taskId, { relatedTaskIds, blockedByTaskIds }) {
   const operations = []
 
   if (relatedTaskIds !== undefined) {
@@ -171,7 +204,37 @@ async function applyTaskLinks(projectId, taskId, { relatedTaskIds }) {
     }
   }
 
+  if (blockedByTaskIds !== undefined) {
+    const ids = await sameProjectTaskIds(projectId, taskId, blockedByTaskIds)
+    operations.push(prisma.taskLink.deleteMany({ where: { type: 'blocks', toTaskId: taskId } }))
+    if (ids.length > 0) {
+      operations.push(
+        prisma.taskLink.createMany({
+          data: ids.map((fromTaskId) => ({ fromTaskId, toTaskId: taskId, type: 'blocks' })),
+        }),
+      )
+    }
+  }
+
   if (operations.length > 0) await prisma.$transaction(operations)
+}
+
+// 선행 목록을 교체할 때 순환이 생기는지 검사한다 — 순환이 생기면 서로 영원히
+// 기다리는 고리가 되어 "미완료 선행 N" 표시 자체가 무의미해진다(spec 2장).
+// 프로젝트 안의 blocks 링크만 읽어 그래프를 만드는데, 사내 툴 규모에서는
+// 프로젝트당 수십 건이라 저렴하다.
+async function assertNoBlockingCycle(projectId, taskId, blockedByTaskIds) {
+  if (!Array.isArray(blockedByTaskIds) || blockedByTaskIds.length === 0) return null
+
+  const links = await prisma.taskLink.findMany({
+    where: { type: 'blocks', fromTask: { projectId } },
+    select: { fromTaskId: true, toTaskId: true },
+  })
+  const offenderId = findBlockingCycle(links, taskId, blockedByTaskIds)
+  if (!offenderId) return null
+
+  const offender = await prisma.task.findUnique({ where: { id: offenderId }, select: { title: true } })
+  return `선행 일감으로 지정하려는 "${offender?.title || '알 수 없음'}"이(가) 이미 이 일감을 기다리고 있어서, 서로 선행이 되는 순환이 생깁니다`
 }
 
 // 하위 작업 계층은 딱 1단계만 허용한다(서버 검증, DB 제약 아님) — 후보가 이미
@@ -251,6 +314,15 @@ async function applyTaskFollowers(projectId, taskId, followerIds) {
     )
   }
   await prisma.$transaction(operations)
+}
+
+// 미완료 선행 일감 수만 다시 센다 — 선행 링크 갱신(applyTaskLinks)이 task
+// 조회보다 나중에 일어나므로, 저장 응답에 실려온 blockedByOpenCount는 갱신 전
+// 값이다(참조자와 같은 이유). 링크를 건드린 요청에서만 부른다.
+async function loadBlockedByOpenCount(taskId) {
+  return prisma.taskLink.count({
+    where: { type: 'blocks', toTaskId: taskId, fromTask: { status: { not: 'done' } } },
+  })
 }
 
 // 참조자만 따로 다시 읽는다 — 갱신(applyTaskFollowers)이 task 저장과 다른
@@ -446,7 +518,8 @@ router.get('/:id', requireProjectRole('member'), async (req, res) => {
   res.json(decryptTask(task, memberIds, req.user, req.projectAccess))
 })
 
-// 'related'(연결일감)만 남았다 — 부모/자식은 Task.parentTaskId 계층으로 대체됨.
+// 상세페이지의 관계 섹션이 쓰는 목록 — 연결 일감(대칭)과 선행/후행(방향 있음).
+// 부모/자식은 여기가 아니라 Task.parentTaskId 계층이고 GET /:id로 함께 온다.
 router.get('/:id/links', requireProjectRole('member'), async (req, res) => {
   const task = await prisma.task.findFirst({
     where: { id: req.params.id, projectId: req.params.projectId },
@@ -454,13 +527,28 @@ router.get('/:id/links', requireProjectRole('member'), async (req, res) => {
   })
   if (!task) return res.status(404).json({ error: 'Not found' })
 
-  const relatedLinks = await prisma.taskLink.findMany({
-    where: { type: 'related', OR: [{ fromTaskId: task.id }, { toTaskId: task.id }] },
-    select: { fromTaskId: true, fromTask: { select: linkTaskSelect }, toTask: { select: linkTaskSelect } },
-  })
+  const [relatedLinks, blockingLinks] = await Promise.all([
+    prisma.taskLink.findMany({
+      where: { type: 'related', OR: [{ fromTaskId: task.id }, { toTaskId: task.id }] },
+      select: { fromTaskId: true, fromTask: { select: linkTaskSelect }, toTask: { select: linkTaskSelect } },
+    }),
+    // 선행·후행은 같은 type의 방향만 다른 행이라 한 번에 읽고 아래에서 갈라준다.
+    prisma.taskLink.findMany({
+      where: { type: 'blocks', OR: [{ fromTaskId: task.id }, { toTaskId: task.id }] },
+      select: {
+        fromTaskId: true,
+        toTaskId: true,
+        fromTask: { select: linkTaskSelect },
+        toTask: { select: linkTaskSelect },
+      },
+    }),
+  ])
 
   res.json({
     related: relatedLinks.map((l) => (l.fromTaskId === task.id ? l.toTask : l.fromTask)),
+    // 이 일감으로 들어오는 간선이 선행(편집 가능), 나가는 간선이 후행(읽기 전용).
+    blockedBy: blockingLinks.filter((l) => l.toTaskId === task.id).map((l) => l.fromTask),
+    blocking: blockingLinks.filter((l) => l.fromTaskId === task.id).map((l) => l.toTask),
   })
 })
 
@@ -481,6 +569,7 @@ router.post('/', requireProjectRole('member'), async (req, res) => {
     endAt,
     parentTaskId,
     relatedTaskIds,
+    blockedByTaskIds,
     followerIds,
   } = req.body
   if (!title) return res.status(400).json({ error: 'title is required' })
@@ -527,7 +616,9 @@ router.post('/', requireProjectRole('member'), async (req, res) => {
     },
     include: taskWriteInclude,
   })
-  await applyTaskLinks(req.params.projectId, task.id, { relatedTaskIds })
+  // 방금 만든 일감은 나가는 blocks 간선이 없어서 선행을 무엇으로 잡아도 순환이
+  // 성립하지 않는다 — 그래서 여기서는 순환 검사를 하지 않는다(PATCH에만 있다).
+  await applyTaskLinks(req.params.projectId, task.id, { relatedTaskIds, blockedByTaskIds })
   await applyTaskFollowers(req.params.projectId, task.id, followerIds)
   await prisma.taskActivity.create({ data: { taskId: task.id, actorId: req.user.id, action: 'created' } })
   notifyPeopleChanges(task, req.user, { assigneeId: null, reviewerId: null })
@@ -538,6 +629,7 @@ router.post('/', requireProjectRole('member'), async (req, res) => {
   res.status(201).json({
     ...created,
     followers: Array.isArray(followerIds) ? await loadFollowers(task.id) : created.followers,
+    ...(Array.isArray(blockedByTaskIds) && { blockedByOpenCount: await loadBlockedByOpenCount(task.id) }),
   })
 })
 
@@ -555,6 +647,7 @@ const EDITABLE_FIELD_KEYS = [
   'endAt',
   'parentTaskId',
   'relatedTaskIds',
+  'blockedByTaskIds',
   'followerIds',
 ]
 
@@ -579,6 +672,7 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
     endAt,
     parentTaskId,
     relatedTaskIds,
+    blockedByTaskIds,
     followerIds,
     review,
   } = req.body
@@ -671,6 +765,11 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
     if (parentProblem) return res.status(400).json({ error: parentProblem })
   }
 
+  if (blockedByTaskIds !== undefined) {
+    const cycleProblem = await assertNoBlockingCycle(req.params.projectId, req.params.id, blockedByTaskIds)
+    if (cycleProblem) return res.status(400).json({ error: cycleProblem })
+  }
+
   const data = {
     ...(title !== undefined && { title }),
     ...(description !== undefined && { description }),
@@ -722,7 +821,7 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
     return res.status(500).json({ error: '저장 중 문제가 발생했습니다' })
   }
 
-  await applyTaskLinks(req.params.projectId, task.id, { relatedTaskIds })
+  await applyTaskLinks(req.params.projectId, task.id, { relatedTaskIds, blockedByTaskIds })
   await applyTaskFollowers(req.params.projectId, task.id, followerIds)
   if (activityChanges.length > 0) {
     await prisma.taskActivity.createMany({
@@ -737,6 +836,11 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
   // 않았다면 이미 맞는 값이므로 조회를 한 번 아낀다(칸반 드래그처럼 상태만
   // 바꾸는 요청이 이 경로의 대부분이다).
   const followers = Array.isArray(followerIds) ? await loadFollowers(task.id) : updated.followers
+  // 선행 링크도 같은 이유로 이번 요청에서 바꿨을 때만 다시 센다
+  // (위 loadBlockedByOpenCount 주석).
+  const blockedByOpenCount = Array.isArray(blockedByTaskIds)
+    ? await loadBlockedByOpenCount(task.id)
+    : updated.blockedByOpenCount
 
   notifyPeopleChanges(task, req.user, existing, { skipReviewer: transition?.action === 'request' })
   if (transition) {
@@ -745,7 +849,7 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
 
   // 방금 만든 검수 이력의 id를 함께 돌려준다 — 산출물 파일은 이력이 생긴 뒤에야
   // 붙일 수 있어서(2단계 업로드), 팝업이 이 값으로 곧바로 업로드를 이어간다.
-  res.json({ ...updated, followers, createdReviewId: createdReview?.id ?? null })
+  res.json({ ...updated, followers, blockedByOpenCount, createdReviewId: createdReview?.id ?? null })
 })
 
 // Backs the project Gantt chart (일정 메뉴) — any project member may drag a

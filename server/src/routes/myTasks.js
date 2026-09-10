@@ -43,6 +43,11 @@ router.get('/', async (req, res) => {
           // taskInclude와 같은 조건이어야 두 목록의 배지 숫자가 일치한다.
           _count: { select: { attachments: { where: { reviewId: null } }, comments: true } },
           checklistItems: { select: { done: true } },
+          // 관계 배지(하위 진행률 / 미완료 선행 수)용 — tasks.js의 taskInclude와
+          // 같은 조건을 손으로 맞춰둔다. linksTo는 이 일감으로 들어오는 링크라
+          // type='blocks'에서는 곧 "나를 막는 선행 일감"이다.
+          subtasks: { select: { status: true } },
+          linksTo: { where: { type: 'blocks' }, select: { fromTask: { select: { status: true } } } },
         },
       },
     },
@@ -58,10 +63,13 @@ router.get('/', async (req, res) => {
       return {
         projectId: project.id,
         projectName: project.name,
-        tasks: project.tasks.map((task) => ({
+        tasks: project.tasks.map(({ linksTo, ...task }) => ({
           ...task,
           assignee: task.assignee ? decryptUser(task.assignee) : null,
           assigneeIsMember: task.assigneeId ? memberIds.has(task.assigneeId) : true,
+          // tasks.js의 decryptTask와 같은 계산 — linksTo 자체는 내보내지 않고
+          // 미완료 선행 개수만 내려준다.
+          blockedByOpenCount: linksTo.filter((l) => l.fromTask.status !== 'done').length,
           ...taskPermissionFlags(task, req.user, projectAccess),
         })),
       }

@@ -23,7 +23,9 @@ import TaskReviewHistory from '../components/TaskReviewHistory'
 import TaskStatusDialog from '../components/TaskStatusDialog'
 import TaskSubtasks from '../components/TaskSubtasks'
 
-const EMPTY_LINKS = { related: [] }
+// 선행(blockedBy)은 편집 가능, 후행(blocking)은 읽기 전용 파생값이다
+// (docs/task-relations-spec.md 2장).
+const EMPTY_LINKS = { related: [], blockedBy: [], blocking: [] }
 
 // status는 draft에 없다 — 상태는 폼에 담아 저장하는 값이 아니라 그 자리에서
 // 바꾸는 값이고, 수정 폼에 두면 검수요청/반려 팝업 절차를 우회하는 경로가 된다
@@ -39,6 +41,7 @@ const EMPTY_DRAFT = {
   endAt: '',
   parentTask: null,
   relatedTasks: [],
+  blockedByTasks: [],
   followers: [],
 }
 
@@ -51,9 +54,9 @@ function formatDate(value) {
   return new Date(value).toLocaleDateString('ko-KR')
 }
 
-// links는 마지막으로 불러오거나 저장된 연결일감 — 편집 중 선택을 취소했을 때
+// links는 마지막으로 불러오거나 저장된 연결 일감 — 편집 중 선택을 취소했을 때
 // 되돌아갈 기준점이라 draft와 분리해서 들고 있는다(TaskFormPage 참고).
-// parentTask/followers는 연결일감과 달리 task 자체에 실려온다(GET /:id).
+// parentTask/followers는 연결 일감과 달리 task 자체에 실려온다(GET /:id).
 function draftFromTask(task, links = EMPTY_LINKS) {
   return {
     title: task.title,
@@ -66,6 +69,7 @@ function draftFromTask(task, links = EMPTY_LINKS) {
     endAt: toDateInputValue(task.endAt),
     parentTask: task.parentTask || null,
     relatedTasks: links.related,
+    blockedByTasks: links.blockedBy,
     followers: task.followers || [],
   }
 }
@@ -158,7 +162,8 @@ function TaskFormPage() {
     [allTasks, taskId],
   )
 
-  const setLinkField = (tasks) => setDraft((d) => ({ ...d, relatedTasks: tasks }))
+  const setRelatedTasks = (tasks) => setDraft((d) => ({ ...d, relatedTasks: tasks }))
+  const setBlockedByTasks = (tasks) => setDraft((d) => ({ ...d, blockedByTasks: tasks }))
   const setParentTask = (parentTask) => setDraft((d) => ({ ...d, parentTask }))
 
   const memberUsers = useMemo(() => members.map((m) => m.user), [members])
@@ -212,7 +217,7 @@ function TaskFormPage() {
     if (dateProblem || dateOutOfProjectRange) return
     setSaving(true)
     try {
-      const newLinks = { related: draft.relatedTasks }
+      const newLinks = { related: draft.relatedTasks, blockedBy: draft.blockedByTasks, blocking: links.blocking }
       const body = {
         title: draft.title.trim(),
         description: draft.description.trim() || null,
@@ -224,6 +229,7 @@ function TaskFormPage() {
         endAt: draft.endAt || null,
         parentTaskId: draft.parentTask?.id || null,
         relatedTaskIds: newLinks.related.map((t) => t.id),
+        blockedByTaskIds: newLinks.blockedBy.map((t) => t.id),
         followerIds: draft.followers.map((f) => f.id),
       }
       if (isNew) {
@@ -341,7 +347,10 @@ function TaskFormPage() {
         editing={editing}
         candidates={linkCandidates}
         related={draft.relatedTasks}
-        onChange={setLinkField}
+        onRelatedChange={setRelatedTasks}
+        blockedBy={draft.blockedByTasks}
+        onBlockedByChange={setBlockedByTasks}
+        blocking={links.blocking}
       />
     </div>
   )

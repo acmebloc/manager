@@ -4,6 +4,7 @@ import { apiFetch } from '../lib/api'
 import { TASK_GRADES, TASK_STATUSES, TASK_TYPES, sortTasks, taskStatusLabel } from '../lib/taskFields'
 import { submitStatusChange } from '../lib/taskReview'
 import { Avatar } from '../components/ProjectMembers'
+import TaskRelationBadges from '../components/TaskRelationBadges'
 import TaskStatusDialog from '../components/TaskStatusDialog'
 import TaskTable from '../components/TaskTable'
 
@@ -13,6 +14,8 @@ function formatDate(value) {
 }
 
 // 상태 변경(PATCH) 응답은 상세페이지용이라 이 목록이 쓰지 않는 필드까지 실려온다.
+// (subtasks/blockedByOpenCount는 관계 배지가 쓰므로 그대로 통과시킨다 —
+//  안 그러면 드래그 직후 배지만 사라진다.)
 // 특히 description은 본문에 base64 이미지가 박힐 수 있어서 목록 API(/api/my-tasks)도
 // 애초에 안 내려주는 필드다 — 그대로 state에 넣으면 상태를 바꾼 일감마다 그만큼
 // 화면에 계속 물려 있게 된다. 새로 늘어나는 필드는 그냥 통과시키고, 무겁거나
@@ -60,8 +63,12 @@ function TaskCard({ task, draggable, onDragStart, onClick }) {
         </span>
         {task.endAt && <span>{formatDate(task.endAt)}</span>}
       </div>
-      {(task._count?.attachments > 0 || task._count?.comments > 0 || task.checklistItems?.length > 0) && (
-        <div className="flex gap-2 text-xs text-gray-400 dark:text-gray-500">
+      {(task._count?.attachments > 0 ||
+        task._count?.comments > 0 ||
+        task.checklistItems?.length > 0 ||
+        task.subtasks?.length > 0 ||
+        task.blockedByOpenCount > 0) && (
+        <div className="flex flex-wrap gap-2 text-xs text-gray-400 dark:text-gray-500">
           {task._count.attachments > 0 && <span>첨부 {task._count.attachments}</span>}
           {task._count.comments > 0 && <span>댓글 {task._count.comments}</span>}
           {task.checklistItems?.length > 0 && (
@@ -69,6 +76,7 @@ function TaskCard({ task, draggable, onDragStart, onClick }) {
               체크리스트 {task.checklistItems.filter((i) => i.done).length}/{task.checklistItems.length}
             </span>
           )}
+          <TaskRelationBadges task={task} />
         </div>
       )}
     </li>
@@ -231,6 +239,23 @@ function TasksPage() {
       ),
     )
 
+  // 관계 배지(하위 진행률 / 선행 대기)는 **다른 일감의 완료 여부**에 달려 있다.
+  // 그래서 완료 경계를 넘는 상태 변경은 방금 옮긴 카드뿐 아니라 화면의 다른
+  // 카드까지 낡게 만든다 — A를 완료했는데 A를 선행으로 둔 B의 "선행 대기 1"이
+  // 그대로 남거나, 하위를 완료했는데 상위의 "하위 0/2"가 안 바뀌는 식이다.
+  // 그 경우에만 목록을 다시 읽는다. 대기↔진행중처럼 배지에 영향이 없는 전이는
+  // 낙관적 업데이트로 끝내서 드래그마다 전체 재조회가 일어나지 않게 한다.
+  const refreshIfDoneBoundary = async (from, to) => {
+    if (from !== 'done' && to !== 'done') return
+    try {
+      setSections(await apiFetch('/api/my-tasks'))
+    } catch {
+      // 재조회가 실패해도 상태 변경 자체는 이미 반영됐다 — 배지만 낡은 채로
+      // 두고, 사용자가 새로고침하면 맞아진다. 여기서 에러를 띄우면 정작
+      // 성공한 상태 변경이 실패처럼 보인다.
+    }
+  }
+
   const moveTask = async (projectId, task, status) => {
     // 낙관적 업데이트 — 실패하면 되돌린다.
     applyTask(projectId, task.id, { ...task, status })
@@ -238,6 +263,7 @@ function TasksPage() {
       const { task: updated, uploadError } = await submitStatusChange(projectId, task.id, { status })
       applyTask(projectId, task.id, toListTask(updated))
       setError(uploadError)
+      await refreshIfDoneBoundary(task.status, status)
     } catch (err) {
       applyTask(projectId, task.id, task)
       setError(err.message)
@@ -276,6 +302,7 @@ function TasksPage() {
     applyTask(projectId, task.id, toListTask(updated))
     setError(uploadError)
     setPendingChange(null)
+    await refreshIfDoneBoundary(task.status, transition.to)
   }
 
   if (loading) return null
