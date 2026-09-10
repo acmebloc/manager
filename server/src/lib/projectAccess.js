@@ -51,6 +51,9 @@ export async function getProjectAccess(projectId, user) {
 
 // Non-members get 404 rather than 403, so the API doesn't confirm that a
 // project id exists to someone with no access to it.
+// getProjectAccess가 던지면 lib/expressAsyncErrors.js의 패치가 거부를
+// next(err)로 넘겨 index.js의 에러 핸들러까지 보낸다 — 여기서 따로 try/catch를
+// 하지 않는 이유다(그 패치가 없으면 응답 없이 요청이 매달린다).
 export function requireProjectRole(minRole) {
   return async (req, res, next) => {
     const projectId = req.params.projectId || req.params.id

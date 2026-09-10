@@ -2,6 +2,7 @@ import 'dotenv/config'
 import cookieParser from 'cookie-parser'
 import cors from 'cors'
 import express from 'express'
+import { installAsyncErrorHandling } from './lib/expressAsyncErrors.js'
 import { assertEnv } from './lib/envCheck.js'
 import { startDueReminderJob } from './lib/dueReminderJob.js'
 import { requireAuth } from './middleware/auth.js'
@@ -57,6 +58,21 @@ app.use(cookieParser())
 
 app.get('/health', (req, res) => res.json({ ok: true }))
 
+// URL에 널바이트(%00)가 섞이면 그 값이 그대로 Prisma로 들어가고 Postgres가
+// 22021(invalid byte sequence for encoding "UTF8")로 거부한다. 그 예외는 async
+// 라우트 핸들러 안에서 던져지는데 Express 4는 async 거부를 보지 않으므로(아래
+// 에러 핸들러 주석 참고) **응답이 아예 안 나가고 요청이 매달린다** — 500도
+// 아니고, 클라이언트가 스스로 포기할 때까지 소켓이 열려 있다.
+//
+// 라우트마다 try/catch를 다는 대신 입구에서 잘라낸다. 널바이트가 정당하게
+// 들어올 경로는 이 API에 없으므로 통째로 400이 맞다.
+app.use((req, res, next) => {
+  if (req.originalUrl.includes('%00') || req.originalUrl.includes('\0')) {
+    return res.status(400).json({ error: '잘못된 요청입니다' })
+  }
+  next()
+})
+
 app.use('/api/auth', authRouter)
 // Public — serves the current profile picture by user id, no auth required
 // (an <img src> can't send a Bearer header). See avatar.js for why.
@@ -105,7 +121,11 @@ app.use((err, req, res, next) => {
 // 1회 실행 후 자체 setInterval로 반복(dueReminderJob.js).
 startDueReminderJob()
 
+// 요청을 받기 시작하기 전에 붙인다. 라우트 등록 시점이 아니라 요청 처리 시점을
+// 감싸는 패치라 라우터 import 순서와는 무관하다 — listen보다 앞이기만 하면 된다.
+const asyncErrorsPatched = await installAsyncErrorHandling()
+
 const port = process.env.PORT || 4000
 app.listen(port, () => {
-  console.log(`API listening on port ${port}`)
+  console.log(`API listening on port ${port} (async 거부 패치: ${asyncErrorsPatched ? 'on' : 'OFF'})`)
 })
