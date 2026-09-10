@@ -355,8 +355,14 @@ function TasksPage() {
 
   if (loading) return null
 
+  // 관계도는 캔버스가 화면 아래끝까지 내려가므로 아래 여백을 없앤다 — 남겨두면
+  // 그만큼 페이지가 넘쳐 스크롤바가 생긴다.
   return (
-    <div className="mx-auto w-full max-w-[1400px] px-4 py-8">
+    <div
+      className={`mx-auto w-full max-w-[1400px] px-4 pt-8 ${
+        view === 'graph' ? 'flex flex-1 flex-col pb-0' : 'pb-8'
+      }`}
+    >
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">일감</h2>
         <div className="flex overflow-hidden rounded-md border border-gray-300 dark:border-gray-600">
