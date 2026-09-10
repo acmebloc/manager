@@ -506,6 +506,31 @@ router.get('/', requireProjectRole('member'), async (req, res) => {
   )
 })
 
+// 관계도 뷰 전용 — 프로젝트의 일감과 링크를 **한 번에** 내려준다. 일감별
+// GET /:id/links로 그리면 일감 수만큼 왕복이 생긴다(N+1).
+//
+// ⚠️ 이 라우트는 반드시 아래 GET /:id **위에** 있어야 한다. 순서가 뒤집히면
+// 'relations'가 :id로 잡혀서 "그런 일감 없음" 404가 난다.
+router.get('/relations', requireProjectRole('member'), async (req, res) => {
+  const projectId = req.params.projectId
+  const [tasks, links] = await Promise.all([
+    prisma.task.findMany({
+      where: { projectId },
+      orderBy: { createdAt: 'asc' },
+      // 노드에 그리는 것만 고른다. 담당자는 일부러 뺐다 — 이름 복호화 비용이
+      // 붙는 데다(fieldCrypto.js), 노드에 정보를 얹을수록 정작 봐야 할 관계가
+      // 안 보인다(docs/task-relations-spec.md 6장).
+      select: { id: true, title: true, status: true, parentTaskId: true },
+    }),
+    // 계층(parentTaskId)은 위 일감에 이미 실려 있고, 여기서는 선행/연결만 읽는다.
+    prisma.taskLink.findMany({
+      where: { fromTask: { projectId } },
+      select: { fromTaskId: true, toTaskId: true, type: true },
+    }),
+  ])
+  res.json({ tasks, links })
+})
+
 // Standalone task page (TaskFormPage.jsx) needs to load one task directly —
 // a direct link or refresh can't rely on the board's already-fetched list.
 router.get('/:id', requireProjectRole('member'), async (req, res) => {

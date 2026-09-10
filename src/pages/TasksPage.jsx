@@ -1,12 +1,23 @@
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { apiFetch } from '../lib/api'
 import { TASK_GRADES, TASK_STATUSES, TASK_TYPES, sortTasks, taskStatusLabel } from '../lib/taskFields'
 import { submitStatusChange } from '../lib/taskReview'
 import { Avatar } from '../components/ProjectMembers'
 import TaskRelationBadges from '../components/TaskRelationBadges'
+import ProjectPicker from '../components/ProjectPicker'
 import TaskStatusDialog from '../components/TaskStatusDialog'
 import TaskTable from '../components/TaskTable'
+
+// 관계도는 그래프 라이브러리(@xyflow/react + dagre)를 끌고 오므로 따로 떼어낸다 —
+// 관계도를 한 번도 안 여는 사용자가 그 용량을 받을 이유가 없다.
+const TaskRelationGraph = lazy(() => import('../components/TaskRelationGraph'))
+
+const VIEWS = [
+  { value: 'board', label: '보드' },
+  { value: 'list', label: '목록' },
+  { value: 'graph', label: '관계도' },
+]
 
 function formatDate(value) {
   if (!value) return null
@@ -193,15 +204,31 @@ function TasksPage() {
   const [error, setError] = useState('')
   // ?view=list로 들어오면 목록이 기본으로 켜진 상태로 보이게(공유 가능한
   // 링크) — 토글을 누를 때도 같은 파라미터를 반영해 새로고침해도 유지된다.
-  const [view, setView] = useState(searchParams.get('view') === 'list' ? 'list' : 'board')
+  const [view, setView] = useState(() => {
+    const requested = searchParams.get('view')
+    return requested === 'list' || requested === 'graph' ? requested : 'board'
+  })
+  // 관계도는 프로젝트 하나만 그린다(관계는 프로젝트 안에서만 맺어진다) — 보드·
+  // 목록이 내 프로젝트 전체를 보여주는 것과 스코프가 달라서, 어느 프로젝트를
+  // 보고 있는지 상단 선택기로 분명히 한다.
+  const [graphProjects, setGraphProjects] = useState([])
+  const [graphProjectId, setGraphProjectId] = useState(searchParams.get('projectId') || '')
   // 팝업이 필요한 전이를 기다리는 중 — { projectId, task, transition }
   const [pendingChange, setPendingChange] = useState(null)
 
   const changeView = (next) => {
     setView(next)
     const nextParams = new URLSearchParams(searchParams)
-    if (next === 'list') nextParams.set('view', 'list')
-    else nextParams.delete('view')
+    if (next === 'board') nextParams.delete('view')
+    else nextParams.set('view', next)
+    setSearchParams(nextParams, { replace: true })
+  }
+
+  const changeGraphProject = (projectId) => {
+    setGraphProjectId(projectId)
+    // 새로고침·링크 공유에서 선택이 유지되도록 URL에 남긴다(일정 화면과 동일).
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.set('projectId', projectId)
     setSearchParams(nextParams, { replace: true })
   }
 
@@ -221,6 +248,27 @@ function TasksPage() {
       cancelled = true
     }
   }, [])
+
+  // 관계도로 들어올 때만 프로젝트 목록을 읽는다 — 보드·목록은 my-tasks 하나로
+  // 충분해서 이 요청이 필요 없다. 기본 선택은 가장 최근에 만들어진 프로젝트
+  // (/api/projects가 createdAt desc)로, 일정 화면과 같은 기준이다.
+  useEffect(() => {
+    if (view !== 'graph' || graphProjects.length > 0) return undefined
+    let cancelled = false
+    ;(async () => {
+      try {
+        const data = await apiFetch('/api/projects')
+        if (cancelled) return
+        setGraphProjects(data)
+        setGraphProjectId((current) => (data.some((p) => p.id === current) ? current : (data[0]?.id ?? '')))
+      } catch (err) {
+        if (!cancelled) setError(err.message)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [view, graphProjects.length])
 
   // 프로젝트 상세 페이지의 "일감 바로가기"(?projectId=)로 들어왔을 때 해당
   // 프로젝트 섹션으로 스크롤 — 전용 라우트를 새로 만들지 않기 위한 경량 구현
@@ -312,28 +360,20 @@ function TasksPage() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">일감</h2>
         <div className="flex overflow-hidden rounded-md border border-gray-300 dark:border-gray-600">
-          <button
-            type="button"
-            onClick={() => changeView('board')}
-            className={`px-3 py-1.5 text-sm ${
-              view === 'board'
-                ? 'bg-indigo-600 text-white'
-                : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
-            }`}
-          >
-            보드
-          </button>
-          <button
-            type="button"
-            onClick={() => changeView('list')}
-            className={`px-3 py-1.5 text-sm ${
-              view === 'list'
-                ? 'bg-indigo-600 text-white'
-                : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
-            }`}
-          >
-            목록
-          </button>
+          {VIEWS.map((v) => (
+            <button
+              key={v.value}
+              type="button"
+              onClick={() => changeView(v.value)}
+              className={`px-3 py-1.5 text-sm ${
+                view === v.value
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
+              }`}
+            >
+              {v.label}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -344,7 +384,22 @@ function TasksPage() {
         </p>
       )}
 
-      {sections.length === 0 ? (
+      {/* 관계도는 my-tasks(내 프로젝트 전체)가 아니라 프로젝트 하나를 그리므로
+          sections 유무와 무관하게 자체 데이터로 동작한다 — 아래 분기보다 먼저 뺀다. */}
+      {view === 'graph' ? (
+        <>
+          <ProjectPicker projects={graphProjects} selectedId={graphProjectId} onSelect={changeGraphProject} />
+          {graphProjectId ? (
+            <Suspense
+              fallback={<p className="py-12 text-center text-sm text-gray-400 dark:text-gray-500">불러오는 중...</p>}
+            >
+              <TaskRelationGraph key={graphProjectId} projectId={graphProjectId} />
+            </Suspense>
+          ) : (
+            <p className="py-12 text-center text-gray-500 dark:text-gray-400">확인 가능한 프로젝트가 없습니다.</p>
+          )}
+        </>
+      ) : sections.length === 0 ? (
         <p className="py-12 text-center text-gray-500 dark:text-gray-400">확인 가능한 일감이 없습니다.</p>
       ) : view === 'board' ? (
         sections.map((section) => (
