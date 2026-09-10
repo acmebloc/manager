@@ -47,23 +47,28 @@ function TaskSubtasks({ projectId, taskId, editing, candidates, parentTask, onPa
     }
   }
 
-  if (!editing && !parentTask && subtasks.length === 0) return null
-
+  // 테두리를 그리지 않고 섹션만 내놓는다 — 계층과 관계(TaskLinks)를 한 상자로
+  // 묶는 건 부모(TaskFormPage)가 한다. 그래서 "보여줄 게 없으면 통째로 숨긴다"는
+  // 판단도 부모 몫이고, 여기서는 섹션별로만 숨긴다.
   return (
-    <div className="flex flex-col gap-3 rounded-md border border-gray-200 p-3 dark:border-gray-700">
-      <div>
-        <p className="mb-1 text-xs text-gray-500 dark:text-gray-400">상위 일감</p>
-        {parentTask ? (
-          <ul className="mb-2 flex flex-col gap-1">
-            <TaskChip task={parentTask} projectId={projectId} onRemove={editing ? () => onParentChange(null) : null} />
-          </ul>
-        ) : (
-          <p className="mb-2 text-xs text-gray-400 dark:text-gray-500">없음</p>
-        )}
-        {editing && !parentTask && (
-          <TaskPicker candidates={parentPickCandidates} onPick={onParentChange} placeholder="상위 일감 검색" />
-        )}
-      </div>
+    <>
+      {/* 조회 중이고 상위 일감이 없으면 "없음"만 남으므로 섹션째 숨긴다 —
+          TaskLinkSection이 스스로 하는 것과 같은 규칙. */}
+      {(editing || parentTask) && (
+        <div>
+          <p className="mb-1 text-xs text-gray-500 dark:text-gray-400">상위 일감</p>
+          {parentTask ? (
+            <ul className="mb-2 flex flex-col gap-1">
+              <TaskChip task={parentTask} projectId={projectId} onRemove={editing ? () => onParentChange(null) : null} />
+            </ul>
+          ) : (
+            <p className="mb-2 text-xs text-gray-400 dark:text-gray-500">없음</p>
+          )}
+          {editing && !parentTask && (
+            <TaskPicker candidates={parentPickCandidates} onPick={onParentChange} placeholder="상위 일감 검색" />
+          )}
+        </div>
+      )}
 
       {taskId && (
         <TaskLinkSection
@@ -81,7 +86,7 @@ function TaskSubtasks({ projectId, taskId, editing, candidates, parentTask, onPa
       )}
 
       {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
-    </div>
+    </>
   )
 }
 

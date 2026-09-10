@@ -327,11 +327,25 @@ function TaskFormPage() {
     )
   }
 
-  // 관계일감(상위/하위/연결)은 조회·편집 양쪽에서 완전히 같은 모양이라 한 번만
-  // 만들어 두고, 편집 중에는 폼 안(저장 버튼 위)에, 조회 중에는 체크리스트
-  // 다음 자리에 끼워 넣는다 — 상세페이지의 배치 순서가 스펙 9장에 정해져 있다.
-  const relationSections = (
-    <div className="flex flex-col gap-3">
+  // 계층(상위/하위)과 관계(선행/후행/연결)를 **테두리 하나**로 묶는다. 두
+  // 컴포넌트가 각자 상자를 그리면 상세페이지에 같은 테두리가 두 개 겹쳐 보인다
+  // (사용자 요청 2026-09-10).
+  //
+  // 대신 "보여줄 게 하나도 없으면 상자를 아예 그리지 않는다"는 판단이 부모 몫이
+  // 됐다 — 자식이 아무것도 렌더하지 않아도 부모는 렌더 전에 그걸 알 수 없으므로,
+  // 두 컴포넌트에 넘기는 것과 같은 데이터를 여기서 직접 본다.
+  const hasAnyRelation =
+    Boolean(draft.parentTask) ||
+    subtasks.length > 0 ||
+    draft.blockedByTasks.length > 0 ||
+    links.blocking.length > 0 ||
+    draft.relatedTasks.length > 0
+
+  // 조회·편집 양쪽에서 완전히 같은 모양이라 한 번만 만들어 두고, 편집 중에는 폼
+  // 안(저장 버튼 위)에, 조회 중에는 체크리스트 다음 자리에 끼워 넣는다 —
+  // 상세페이지의 배치 순서가 스펙 9장에 정해져 있다.
+  const relationSections = (editing || hasAnyRelation) && (
+    <div className="flex flex-col gap-3 rounded-md border border-gray-200 p-3 dark:border-gray-700">
       <TaskSubtasks
         projectId={projectId}
         taskId={taskId}
@@ -657,7 +671,7 @@ function TaskFormPage() {
           <div className="mb-4">
             <TaskChecklist projectId={projectId} taskId={taskId} canModify={task.canModify} />
           </div>
-          {!editing && <div className="mb-4">{relationSections}</div>}
+          {!editing && relationSections && <div className="mb-4">{relationSections}</div>}
           <div className="mb-4">
             <TaskAttachments projectId={projectId} taskId={taskId} canModify={task.canModify} />
           </div>

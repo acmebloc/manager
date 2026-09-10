@@ -128,8 +128,6 @@ function TaskLinks({
   onBlockedByChange,
   blocking,
 }) {
-  if (!editing && related.length === 0 && blockedBy.length === 0 && blocking.length === 0) return null
-
   // 후행 일감은 선행 후보에서 뺀다 — 그걸 선행으로 잡으면 곧바로 순환이라 서버가
   // 거절한다. 간접 순환(A→B→C→A)은 서버만 잡을 수 있지만, 가장 흔한 직접 순환은
   // 애초에 고를 수 없게 하는 쪽이 저장 후 에러를 보는 것보다 낫다.
@@ -143,8 +141,11 @@ function TaskLinks({
   const orderedIds = new Set([...blockingIds, ...blockedBy.map((t) => t.id)])
   const relatedCandidates = candidates.filter((t) => !orderedIds.has(t.id))
 
+  // TaskSubtasks와 마찬가지로 테두리 없이 섹션만 내놓는다 — 상자는 부모가 하나만
+  // 그린다. 각 TaskLinkSection이 비어 있으면 스스로 사라지므로 여기서 전체를
+  // 숨기는 판단은 하지 않는다.
   return (
-    <div className="flex flex-col gap-3 rounded-md border border-gray-200 p-3 dark:border-gray-700">
+    <>
       <TaskLinkSection
         title="선행 일감"
         projectId={projectId}
@@ -177,7 +178,7 @@ function TaskLinks({
         onRemove={(id) => onRelatedChange(related.filter((t) => t.id !== id))}
         placeholder="연결 일감 검색"
       />
-    </div>
+    </>
   )
 }
 
