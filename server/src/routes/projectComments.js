@@ -5,6 +5,7 @@ import { notifyMention } from '../lib/mailer.js'
 import { createNotification } from '../lib/notifications.js'
 import { wantsEmailNotifications } from '../lib/notificationPrefs.js'
 import { requireProjectRole } from '../lib/projectAccess.js'
+import { assertStringArrayFields, assertStringFields } from '../lib/requestShapes.js'
 
 // Mounted at /api/projects/:projectId/comments
 const router = Router({ mergeParams: true })
@@ -94,6 +95,9 @@ router.get('/', requireProjectRole('member'), async (req, res) => {
 
 router.post('/', requireProjectRole('member'), async (req, res) => {
   const { body, mentionUserIds } = req.body
+  const shapeProblem =
+    assertStringFields(req.body, ['body']) ?? assertStringArrayFields(req.body, ['mentionUserIds'])
+  if (shapeProblem) return res.status(400).json({ error: shapeProblem })
   if (!body) return res.status(400).json({ error: 'body is required' })
 
   const mentionIds = await validMentionUserIds(req.params.projectId, mentionUserIds)
@@ -123,6 +127,9 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
   if (existing.authorId !== req.user.id) return res.status(403).json({ error: 'Forbidden' })
 
   const { body, mentionUserIds } = req.body
+  const shapeProblem =
+    assertStringFields(req.body, ['body']) ?? assertStringArrayFields(req.body, ['mentionUserIds'])
+  if (shapeProblem) return res.status(400).json({ error: shapeProblem })
   if (!body) return res.status(400).json({ error: 'body is required' })
 
   const oldMentions = await prisma.projectCommentMention.findMany({

@@ -12,6 +12,7 @@ import {
 import { createNotification } from '../lib/notifications.js'
 import { wantsEmailNotifications } from '../lib/notificationPrefs.js'
 import { requireProjectRole } from '../lib/projectAccess.js'
+import { assertStringArrayFields, assertStringFields } from '../lib/requestShapes.js'
 import {
   buildHeaderMap,
   existingTaskDedupeKeys,
@@ -277,6 +278,18 @@ async function assertProjectMember(projectId, userId, previousUserId, message) {
     where: { projectId_userId: { projectId, userId } },
   })
   return membership ? null : message
+}
+
+// POST/PATCH 본문에서 문자열·문자열배열로만 와야 하는 자리(lib/requestShapes.js).
+// 두 핸들러가 같은 필드를 받으므로 목록도 한 벌만 둔다. type·grade·status는
+// isValidTaskType 류가 이미 값 자체를 검사하므로 여기 넣지 않는다.
+const TASK_STRING_FIELDS = ['title', 'description', 'assigneeId', 'reviewerId', 'parentTaskId', 'startAt', 'endAt']
+const TASK_STRING_ARRAY_FIELDS = ['relatedTaskIds', 'blockedByTaskIds', 'followerIds']
+
+function assertBodyShape(body) {
+  return (
+    assertStringFields(body, TASK_STRING_FIELDS) ?? assertStringArrayFields(body, TASK_STRING_ARRAY_FIELDS)
+  )
 }
 
 const ASSIGNEE_NOT_MEMBER = 'Assignee must be a member of this project'
@@ -597,6 +610,8 @@ router.post('/', requireProjectRole('member'), async (req, res) => {
     blockedByTaskIds,
     followerIds,
   } = req.body
+  const shapeProblem = assertBodyShape(req.body)
+  if (shapeProblem) return res.status(400).json({ error: shapeProblem })
   if (!title) return res.status(400).json({ error: 'title is required' })
   if (type !== undefined && !isValidTaskType(type)) {
     return res.status(400).json({ error: 'Invalid type' })
@@ -713,6 +728,8 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
     }
   }
 
+  const shapeProblem = assertBodyShape(req.body)
+  if (shapeProblem) return res.status(400).json({ error: shapeProblem })
   if (type !== undefined && !isValidTaskType(type)) {
     return res.status(400).json({ error: 'Invalid type' })
   }

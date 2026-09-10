@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../db.js'
+import { assertStringFields } from '../lib/requestShapes.js'
 import { syncMemberRole } from '../lib/bookstack.js'
 import { decryptUser, encryptField } from '../lib/fieldCrypto.js'
 import { findSolePmProjects } from '../lib/projectAccess.js'
@@ -25,6 +26,10 @@ const DATA_URL_PICTURE_PATTERN = /^data:image\/[a-zA-Z0-9.+-]+;base64,/
 // browser's local cache.
 router.patch('/', async (req, res) => {
   const { name, picture, emailNotificationsEnabled } = req.body
+  // 여기를 안 막으면 객체가 그대로 encryptField로 들어가 이름이
+  // "[object Object]"로 저장된다(실측). 500이 아니라 조용한 데이터 손상이었다.
+  const shapeProblem = assertStringFields(req.body, ['name', 'picture'])
+  if (shapeProblem) return res.status(400).json({ error: shapeProblem })
   if (picture !== undefined && picture !== null && !DATA_URL_PICTURE_PATTERN.test(picture)) {
     return res.status(400).json({ error: 'picture must be an uploaded image' })
   }

@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../db.js'
+import { assertStringFields } from '../lib/requestShapes.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
 import { assertNotLastPm, isValidRole, normalizeRole, requireProjectRole } from '../lib/projectAccess.js'
 import { assertDateOrder } from '../lib/taskFields.js'
@@ -56,6 +57,8 @@ router.get('/', async (req, res) => {
 // up front rather than left to a follow-up step.
 router.post('/', async (req, res) => {
   const { name, description, startAt, endAt, members = [] } = req.body
+  const shapeProblem = assertStringFields(req.body, ['name', 'description', 'startAt', 'endAt'])
+  if (shapeProblem) return res.status(400).json({ error: shapeProblem })
   if (!name) return res.status(400).json({ error: 'name is required' })
 
   const dateProblem = assertDateOrder(startAt, endAt)
@@ -134,6 +137,8 @@ router.get('/:id', requireProjectRole('member'), async (req, res) => {
 
 router.patch('/:id', requireProjectRole('pm'), async (req, res) => {
   const { name, description, startAt, endAt, archived } = req.body
+  const shapeProblem = assertStringFields(req.body, ['name', 'description', 'startAt', 'endAt'])
+  if (shapeProblem) return res.status(400).json({ error: shapeProblem })
 
   // PATCH는 부분 수정이라, 이번 요청에서 안 건드리는 쪽은 req.projectAccess에
   // 이미 실려있는 현재 값으로 채워서 순서를 검사한다(tasks.js PATCH와 동일한
