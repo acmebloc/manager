@@ -110,7 +110,9 @@ sudo -u manager git clone <이 저장소 주소> /var/www/manager/app
 cd /var/www/manager/app
 
 # 프론트엔드 빌드 (정적 파일이 dist/ 에 생성됨 — Apache가 이걸 직접 서빙)
-sudo -u manager npm install
+# npm install이 아니라 npm ci — 여기서 npm install을 쓰면 이 서버의
+# package-lock.json이 그때부터 저장소와 어긋나기 시작한다("왜 npm ci인가" 참고).
+sudo -u manager npm ci
 sudo -u manager cp .env.example .env   # 프론트엔드용 .env
 sudo -u manager vi .env
 ```
@@ -125,7 +127,8 @@ VITE_GOOGLE_CLIENT_ID=240689976296-931102cla566kf3serovkqtqotm2d09t.apps.googleu
 sudo -u manager npm run build   # dist/ 생성
 
 cd server
-sudo -u manager npm install
+sudo -u manager npm ci
+sudo -u manager npx prisma generate   # postinstall에 기대지 않고 직접 (아래 "왜 npm ci인가")
 ```
 
 ## 6. 백엔드 환경변수 설정
@@ -491,20 +494,66 @@ curl http://localhost:4000/health
 `/var/www/manager/app`은 `manager` 소유에 `drwxr-x---`라, `ubuntu`로는 `cd`조차 안 된다
 (`Permission denied`). `cd`를 `sudo -u manager` **안쪽**에서 해야 한다.
 
+**`npm install`이 아니라 `npm ci`를 쓴다.** 이유는 아래 "왜 npm ci인가" 참고.
+
 ```bash
 sudo -u manager bash -c 'cd /var/www/manager/app && git pull'
-sudo -u manager bash -c 'cd /var/www/manager/app && npm install && npm run build'   # 프론트 변경 시
+#   ^ 출력을 반드시 확인. "Fast-forward"가 아니거나 아래 git log -1이 기대한
+#     커밋이 아니면 여기서 멈춰야 한다 — pull이 실패해도 뒤 단계는 전부 에러
+#     없이 "성공"하므로(예전 코드를 다시 빌드할 뿐) 신호가 되지 못한다.
+sudo -u manager bash -c 'cd /var/www/manager/app && git log -1 --oneline'
 
-sudo -u manager bash -c 'cd /var/www/manager/app/server && npm install'                # 의존성 변경 시
+sudo -u manager bash -c 'cd /var/www/manager/app && npm ci && npm run build'   # 프론트 변경 시
+
+sudo -u manager bash -c 'cd /var/www/manager/app/server && npm ci'                     # 서버 의존성 변경 시
 sudo -u manager bash -c 'cd /var/www/manager/app/server && npx prisma migrate deploy'  # 스키마 변경 시
-sudo -u manager bash -c 'cd /var/www/manager/app/server && npx prisma generate'        # 스키마 변경 시
-#   ^ 반드시 migrate deploy 다음에. postinstall이 막혀 있어 npm install만으론 Prisma
-#     Client가 새 모델/필드를 모른 채로 남는다 (2026-08-26: 이걸 빠뜨려서 배포 직후
-#     API가 전부 조용히 실패한 적 있음)
+sudo -u manager bash -c 'cd /var/www/manager/app/server && npx prisma generate'        # 위 npm ci를 했으면 무조건
+#   ^ **server에 npm ci를 돌렸으면 스키마가 안 바뀌었어도 반드시 실행한다.**
+#     npm ci는 node_modules를 지우고 다시 깔기 때문에 생성돼 있던 Prisma Client가
+#     같이 사라진다. 그대로 재시작하면 API가 전부 실패한다.
+#     @prisma/client의 postinstall이 대신 만들어주긴 한다(npm 11.17에서 실측 확인 —
+#     allow-scripts 경고만 뜨고 실행은 된다). 그래도 여기에 기대지 않는 이유:
+#     그 경고가 곧 차단으로 바뀔 예고이고(npm approve-scripts), 서버 npm 버전이
+#     로컬과 다를 수 있다. generate는 몇 초짜리 멱등 작업이라 그냥 항상 돌리는 게
+#     싸다. 스키마도 바꿨다면 순서는 migrate deploy → generate
+#     (2026-08-26: generate를 빠뜨려서 배포 직후 API가 전부 조용히 실패한 적 있음.
+#      그때는 npm install이었고, 이미 깔린 패키지는 postinstall이 재실행되지
+#      않는다는 게 원인이었다)
 
 sudo -u manager pm2 restart manager-api
 curl -s http://localhost:4000/health
 ```
+
+### 왜 npm ci인가
+
+`npm install`은 실행될 때마다 서버의 `package-lock.json`을 고쳐 쓴다. 그렇게 쌓인
+로컬 수정 때문에 그 파일을 건드리는 커밋을 pull할 때 git이 병합을 통째로 거부한다:
+
+```
+error: Your local changes to the following files would be overwritten by merge:
+        package-lock.json
+Aborting
+```
+
+**2026-09-01과 2026-09-10 두 번 실제로 겪었다.** 프론트 의존성이 바뀌는 배포에서는
+반드시 걸린다. `npm ci`는 lockfile을 읽기만 하고 **절대 고쳐 쓰지 않으므로** 이
+드리프트가 애초에 생기지 않고, 로컬에서 검증한 것과 정확히 같은 버전이 깔린다
+(배포에는 이게 맞다). 대신 `node_modules`를 지우고 다시 깔아 조금 느리다.
+
+이미 드리프트가 쌓여 있으면 `npm ci`로 바꾼 첫 배포에서도 pull이 막힌다. 그때
+한 번만 버려주면 된다(자동 생성 파일이라 안전하다):
+
+```bash
+sudo -u manager bash -c 'cd /var/www/manager/app && git status --short'   # 무엇이 수정됐나 먼저 확인
+sudo -u manager bash -c 'cd /var/www/manager/app && git checkout -- package-lock.json server/package-lock.json && git pull'
+```
+
+`package-lock.json` 외의 파일이 나오면 버리지 말고 내용을 확인해야 한다.
+
+`npm ci`는 `package.json`과 lockfile이 어긋나 있으면 설치를 아예 거부한다
+(`npm install`은 조용히 맞춰버린다). 그래서 의존성을 바꿀 때는 **로컬에서
+`npm install`을 돌려 lockfile까지 같이 커밋**해야 한다. 커밋 전에
+`npm ci --dry-run`으로 확인할 수 있다.
 
 **재시작 전에 환경변수부터 확인**하면 안전하다. 서버는 필수 값이 비었거나
 자리표시자면 아예 뜨지 않으므로(`server/src/lib/envCheck.js`), 미리 돌려보면
@@ -521,8 +570,9 @@ sudo -u manager bash -c 'cd /var/www/manager/app/server && node -e '\''import("d
 ```bash
 sudo -u manager bash
 cd /var/www/manager/app
-git pull && npm install && npm run build
-cd server && npm install
+git pull && git log -1 --oneline    # 커밋 해시가 기대한 것인지 확인하고 넘어간다
+npm ci && npm run build
+cd server && npm ci && npx prisma generate   # npm ci를 했으면 generate는 필수
 exit
 sudo -u manager pm2 restart manager-api
 ```
