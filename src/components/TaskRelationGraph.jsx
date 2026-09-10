@@ -59,12 +59,18 @@ const STATUS_NODE_CLASS = {
   done: 'border-emerald-400 dark:border-emerald-600',
 }
 
-// 관계 종류별 선 모양. 색까지 다르게 하면 상태 색과 경쟁하므로 선 스타일로만
-// 구분한다: 선행은 실선 화살표(순서), 계층은 파선(포함), 연결은 점선(그냥 관련).
+// 관계 종류별 선 모양. **구분은 선 모양(실선/파선/점선)이 하고 색은 진하기만
+// 맡는다** — 세 관계를 색으로 구분하면 노드 테두리의 상태 색과 경쟁한다.
+// 선행은 실선 화살표(순서), 계층은 파선(포함), 연결은 점선(그냥 관련)이다.
+//
+// 색을 한 단계씩 진하게 잡은 이유: 배경 점무늬와 겹칠 때 선이 끊긴 것처럼
+// 보였다. 배경을 더 흐리게 하는 것만으로는 부족해서, 선 쪽을 올려 대비를
+// 벌리는 방향으로 바꿨다(사용자 결정). 관계의 강함 순서대로 진하기를 준다:
+// 선행(indigo-600) > 계층(slate-500) > 연결(slate-400).
 const EDGE_STYLE = {
-  blocks: { stroke: '#6366f1', strokeWidth: 1.5 },
-  parent: { stroke: '#94a3b8', strokeWidth: 1.5, strokeDasharray: '6 3' },
-  related: { stroke: '#cbd5e1', strokeWidth: 1.5, strokeDasharray: '2 3' },
+  blocks: { stroke: '#4f46e5', strokeWidth: 1.75 },
+  parent: { stroke: '#64748b', strokeWidth: 1.5, strokeDasharray: '6 3' },
+  related: { stroke: '#94a3b8', strokeWidth: 1.5, strokeDasharray: '2 3' },
 }
 
 // 미니맵 노드 색. 라이트/다크 어느 쪽에서도 배경과 구분되는 중간 회색 하나로
@@ -413,15 +419,21 @@ function Graph({ projectId }) {
               // 확대 버튼·미니맵이 다크에서 흰색으로 남는다.
               colorMode="system"
             >
-              {/* 점무늬는 아주 흐리게만 남긴다. 관계선 자체가 실선·파선·점선으로
-                  구분되는데 배경 점이 진하면 그 점선과 섞여 어느 게 선인지 헷갈린다
-                  (사용자 지적). 그래도 완전히 없애지는 않았다 — 옅은 질감이라도
-                  있어야 "여기는 끌어 옮길 수 있는 캔버스"로 읽힌다.
-                  색은 className으로 투명도만 낮춰 React Flow의 테마별 기본색
-                  (colorMode="system")을 그대로 쓴다. 간격·크기를 기본값의 2배로 둔
-                  것은 초기 줌 0.5에서 기본값이면 점 반지름이 0.25px가 되어 아예
-                  사라지기 때문이다(실측). */}
-              <Background gap={32} size={2} className="opacity-25" />
+              {/* 점무늬는 있는지 없는지 모를 만큼만 남긴다. 관계선 자체가
+                  실선·파선·점선으로 구분되는데, 배경 점이 눈에 띄면 그 점선·파선과
+                  섞여 선이 끊긴 것처럼 보인다(사용자 지적 2회). 그래도 완전히
+                  없애지는 않았다 — 옅은 질감이라도 있어야 "여기는 끌어 옮길 수 있는
+                  캔버스"로 읽힌다.
+                  Background는 줌에 비례해 커지므로 값이 진입 배율과 묶여 있다:
+                  진입이 0.5였을 때는 기본값이면 점 반지름이 0.25px가 되어 아예
+                  사라져서 2배(gap 32 / size 2)로 키웠는데, 진입이 100%로 바뀐 뒤엔
+                  그 보정이 거꾸로 2배 커 보이는 원인이 됐다. 그래서 크기는 기본값
+                  으로 되돌렸다 — **진입 배율을 다시 바꾸면 이 값도 같이 봐야 한다.**
+                  투명도는 점을 더 죽이는 대신 관계선 색을 진하게 올려(EDGE_STYLE)
+                  대비를 벌리는 쪽으로 정해서 0.25로 되돌렸다(사용자 결정).
+                  색은 건드리지 않는다 — 투명도만 조절해 React Flow의 테마별
+                  기본색(colorMode="system")을 그대로 쓴다. */}
+              <Background gap={20} size={1} className="opacity-25" />
               <Controls showInteractive={false} />
               <MiniMap pannable zoomable nodeColor={MINIMAP_NODE_COLOR} />
             </ReactFlow>
