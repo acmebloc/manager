@@ -106,6 +106,27 @@ app.use('/api/search', requireAuth, searchRouter)
 // BookStack's own server), not our SPA's Bearer-token API calls.
 app.use('/oidc', oidcRouter)
 
+// 미들웨어가 4xx로 던진 것은 그 상태 그대로 돌려준다. Express 관례대로
+// err.status(또는 statusCode)를 보는데, body-parser처럼 http-errors를 쓰는
+// 미들웨어가 이 규약을 따른다 — 깨진 JSON은 400, 본문이 100kb(express.json
+// 기본값)를 넘으면 413이다. 전부 500으로 덮으면 **클라이언트가 고칠 수 있는
+// 문제가 서버 장애로 보인다**: 실측으로 깨진 JSON이 500 "서버 오류가
+// 발생했습니다"로 나갔고, 5xx 기준으로 보는 로그·알림에도 섞여 들어간다.
+// lib/requestShapes.js가 잘못된 타입을 400으로 돌려주기로 한 것과 같은 방향이다.
+//
+// **메시지는 우리 문구로 덮는다.** http-errors의 message는 영문 기술 문구라
+// ("Unexpected token } in JSON at position 5") 화면에 그대로 띄우면 깨져 보인다.
+// 우리 코드에서 사용자에게 보일 문구가 필요하면 지금처럼 라우트가 직접
+// res.status().json()으로 답한다 — 이 핸들러는 미들웨어가 던진 것만 다룬다.
+//
+// 5xx와 status 없는 에러는 그대로 500 + 일반 문구다. 내부 메시지를 흘리면
+// 쿼리나 경로 같은 게 새어나간다.
+const CLIENT_ERROR_MESSAGES = {
+  400: '요청 형식이 올바르지 않습니다',
+  413: '보낸 내용이 너무 큽니다',
+  415: '지원하지 않는 형식입니다',
+}
+
 // Catches whatever a route throws synchronously or hands to next(err).
 // Without it Express falls back to its own handler, which answers with the
 // stack trace whenever NODE_ENV isn't 'production' — and nothing in the
@@ -114,6 +135,10 @@ app.use('/oidc', oidcRouter)
 app.use((err, req, res, next) => {
   console.error('[error]', req.method, req.originalUrl, err)
   if (res.headersSent) return next(err)
+  const status = Number(err?.status ?? err?.statusCode)
+  if (Number.isInteger(status) && status >= 400 && status < 500) {
+    return res.status(status).json({ error: CLIENT_ERROR_MESSAGES[status] || '잘못된 요청입니다' })
+  }
   res.status(500).json({ error: '서버 오류가 발생했습니다' })
 })
 
