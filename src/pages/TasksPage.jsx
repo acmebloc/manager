@@ -202,12 +202,16 @@ function TasksPage() {
   const [sections, setSections] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  // ?view=list로 들어오면 목록이 기본으로 켜진 상태로 보이게(공유 가능한
-  // 링크) — 토글을 누를 때도 같은 파라미터를 반영해 새로고침해도 유지된다.
-  const [view, setView] = useState(() => {
-    const requested = searchParams.get('view')
-    return requested === 'list' || requested === 'graph' ? requested : 'board'
-  })
+  // 어떤 뷰인지는 **URL만이 안다**(state로 따로 들고 있지 않는다). ?view=list로
+  // 들어오면 목록이 켜진 채로 보이고(공유 가능한 링크), 토글도 URL을 바꾸는
+  // 방식이라 새로고침에도 유지된다.
+  //
+  // 예전에는 마운트할 때 한 번만 읽어 state에 담았는데, 그러면 상단 메뉴의
+  // [일감]을 눌러도 화면이 안 바뀌었다 — 목적지가 /tasks라 **이미 이 라우트에
+  // 있으면 컴포넌트가 다시 마운트되지 않고**, useState 초기값도 다시 계산되지
+  // 않는다. URL의 ?view=graph만 사라지고 화면은 관계도에 머물렀다.
+  const requestedView = searchParams.get('view')
+  const view = requestedView === 'list' || requestedView === 'graph' ? requestedView : 'board'
   // 관계도는 프로젝트 하나만 그린다(관계는 프로젝트 안에서만 맺어진다) — 보드·
   // 목록이 내 프로젝트 전체를 보여주는 것과 스코프가 달라서, 어느 프로젝트를
   // 보고 있는지 상단 선택기로 분명히 한다.
@@ -217,7 +221,6 @@ function TasksPage() {
   const [pendingChange, setPendingChange] = useState(null)
 
   const changeView = (next) => {
-    setView(next)
     const nextParams = new URLSearchParams(searchParams)
     if (next === 'board') nextParams.delete('view')
     else nextParams.set('view', next)
