@@ -11,7 +11,7 @@ import {
 } from '../lib/taskFields'
 import { submitStatusChange } from '../lib/taskReview'
 import { FollowerList, FollowerPicker } from '../components/FollowerPicker'
-import { Avatar } from '../components/ProjectMembers'
+import { Avatar, EmailPopover } from '../components/ProjectMembers'
 import MarkdownContent from '../components/MarkdownContent'
 import MarkdownEditor from '../components/MarkdownEditor'
 import TaskActivityLog from '../components/TaskActivityLog'
@@ -538,9 +538,30 @@ function TaskFormPage() {
 
       {editing ? (
         <form onSubmit={save} className="flex flex-col gap-3">
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-            {isNew ? '새 일감' : '일감 수정'}
-          </h2>
+          {/* 저장·취소는 조회 화면의 수정·삭제와 **같은 자리**에 둔다(사용자 요청).
+              폼 맨 아래에 있으면 관계 상자까지 다 지나쳐야 눌러서, 모드를 드나들 때
+              버튼이 화면에서 크게 점프한다. */}
+          <div className="flex items-start justify-between gap-2">
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+              {isNew ? '새 일감' : '일감 수정'}
+            </h2>
+            <div className="flex shrink-0 gap-2">
+              <button
+                type="submit"
+                disabled={saving || !draft.title.trim() || Boolean(dateProblem) || dateOutOfProjectRange}
+                className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+              >
+                {saving ? '저장 중...' : isNew ? '만들기' : '저장'}
+              </button>
+              <button
+                type="button"
+                onClick={cancelEdit}
+                className="rounded-md px-3 py-1.5 text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"
+              >
+                취소
+              </button>
+            </div>
+          </div>
 
           <input
             type="text"
@@ -582,6 +603,55 @@ function TaskFormPage() {
             </label>
           </div>
 
+          <div>
+            {/* Not a <label> — it would wrap the editor's own toolbar buttons,
+                and a label's click-forwarding to its first focusable control
+                can steal focus/activate that button on an unrelated click. */}
+            <p className="text-xs text-gray-500 dark:text-gray-400">본문</p>
+            <div className="mt-1">
+              <MarkdownEditor
+                value={draft.description}
+                onChange={(md) => setDraft((d) => ({ ...d, description: md }))}
+                mentionMembers={memberUsers}
+                mentionUsersById={mentionUsersById}
+                placeholder="본문을 입력하세요"
+              />
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            <div className="flex-1 text-xs text-gray-500 dark:text-gray-400">
+              등록일
+              <p className="mt-1 rounded-md border border-transparent px-3 py-1.5 text-sm text-gray-500 dark:text-gray-400">
+                {isNew ? formatDate(new Date().toISOString()) : formatDate(task.createdAt)}
+              </p>
+            </div>
+            <label className="flex-1 text-xs text-gray-500 dark:text-gray-400">
+              시작일
+              <input
+                type="date"
+                value={draft.startAt}
+                onChange={(e) => setDraft((d) => ({ ...d, startAt: e.target.value }))}
+                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+              />
+            </label>
+            <label className="flex-1 text-xs text-gray-500 dark:text-gray-400">
+              종료일
+              <input
+                type="date"
+                value={draft.endAt}
+                onChange={(e) => setDraft((d) => ({ ...d, endAt: e.target.value }))}
+                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+              />
+            </label>
+          </div>
+          {dateProblem && <p className="text-sm text-red-600 dark:text-red-400">{dateProblem}</p>}
+          {dateOutOfProjectRange && (
+            <p className="text-sm text-red-600 dark:text-red-400">
+              프로젝트 기간을 벗어난 날짜예요. 프로젝트 기간을 확인하세요. ({periodLabel})
+            </p>
+          )}
+
           <div className="grid grid-cols-2 gap-2">
             <label className="text-xs text-gray-500 dark:text-gray-400">
               담당자
@@ -616,39 +686,6 @@ function TaskFormPage() {
             담당자와 검수자는 같은 사람으로 지정할 수 없어요 — 한쪽에 배정된 사람은 다른 쪽 목록에서 빠집니다.
           </p>
 
-          <div className="flex gap-2">
-            <label className="flex-1 text-xs text-gray-500 dark:text-gray-400">
-              시작일
-              <input
-                type="date"
-                value={draft.startAt}
-                onChange={(e) => setDraft((d) => ({ ...d, startAt: e.target.value }))}
-                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-              />
-            </label>
-            <label className="flex-1 text-xs text-gray-500 dark:text-gray-400">
-              종료일
-              <input
-                type="date"
-                value={draft.endAt}
-                onChange={(e) => setDraft((d) => ({ ...d, endAt: e.target.value }))}
-                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-              />
-            </label>
-            <div className="flex-1 text-xs text-gray-500 dark:text-gray-400">
-              등록일
-              <p className="mt-1 rounded-md border border-transparent px-3 py-1.5 text-sm text-gray-500 dark:text-gray-400">
-                {isNew ? formatDate(new Date().toISOString()) : formatDate(task.createdAt)}
-              </p>
-            </div>
-          </div>
-          {dateProblem && <p className="text-sm text-red-600 dark:text-red-400">{dateProblem}</p>}
-          {dateOutOfProjectRange && (
-            <p className="text-sm text-red-600 dark:text-red-400">
-              프로젝트 기간을 벗어난 날짜예요. 프로젝트 기간을 확인하세요. ({periodLabel})
-            </p>
-          )}
-
           {/* 참조자는 전체 폭을 쓰는 별도의 줄 — 여러 명이 칩으로 쌓여 옆 필드와
               나란히 두면 줄 높이가 들쭉날쭉해진다. */}
           <div>
@@ -660,41 +697,9 @@ function TaskFormPage() {
             />
           </div>
 
-          <div>
-            {/* Not a <label> — it would wrap the editor's own toolbar buttons,
-                and a label's click-forwarding to its first focusable control
-                can steal focus/activate that button on an unrelated click. */}
-            <p className="text-xs text-gray-500 dark:text-gray-400">본문</p>
-            <div className="mt-1">
-              <MarkdownEditor
-                value={draft.description}
-                onChange={(md) => setDraft((d) => ({ ...d, description: md }))}
-                mentionMembers={memberUsers}
-                mentionUsersById={mentionUsersById}
-                placeholder="본문을 입력하세요"
-              />
-            </div>
-          </div>
-
           {relationSections}
 
           {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
-          <div className="flex gap-2">
-            <button
-              type="submit"
-              disabled={saving || !draft.title.trim() || Boolean(dateProblem) || dateOutOfProjectRange}
-              className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-            >
-              {saving ? '저장 중...' : isNew ? '만들기' : '저장'}
-            </button>
-            <button
-              type="button"
-              onClick={cancelEdit}
-              className="rounded-md px-3 py-1.5 text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"
-            >
-              취소
-            </button>
-          </div>
         </form>
       ) : (
         <div className="flex flex-col gap-3">
@@ -725,7 +730,11 @@ function TaskFormPage() {
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-2 text-xs">
+          {/* 등록자는 이 줄 오른쪽 끝에 이름만 둔다(사용자 결정) — 바꿀 수 없는
+              값이라 담당자·검수자와 같은 무게로 아래에 두면 눈에 더 걸린다.
+              이메일 팝오버도 붙이지 않는다. 폭이 모자라면 flex-wrap으로 다음 줄에
+              접힌다 — 잘리는 것보다 낫다. */}
+          <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="rounded-full bg-gray-100 px-2 py-0.5 text-gray-600 dark:bg-gray-700 dark:text-gray-300">
               {TASK_TYPES.find((t) => t.value === task.type)?.label}
             </span>
@@ -752,6 +761,9 @@ function TaskFormPage() {
                 {taskStatusLabel(task.status)}
               </span>
             )}
+            <span className="ml-auto text-gray-500 dark:text-gray-400">
+              등록자 {task.createdBy?.name || '미상'}
+            </span>
           </div>
 
           {/* 완료된 일감은 통째로 잠긴다 — 수정 버튼이 사라지는 이유를 알려주지
@@ -763,8 +775,30 @@ function TaskFormPage() {
             </p>
           )}
 
-          {task.description && <MarkdownContent text={task.description} mentionUsersById={mentionUsersById} />}
+          {/* 내용이 비어 있으면 이 구간을 통째로 건너뛴다 — 안 그러면 구분선
+              두 개가 맞붙어 빈 띠처럼 보인다. */}
+          {task.description && (
+            <>
+              <div className="border-t border-gray-100 dark:border-gray-800" />
+              <MarkdownContent text={task.description} mentionUsersById={mentionUsersById} />
+            </>
+          )}
 
+          <div className="border-t border-gray-100 dark:border-gray-800" />
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs text-gray-500 dark:text-gray-400">
+            <div>
+              <dt className="mb-1">등록일</dt>
+              <dd>{formatDate(task.createdAt)}</dd>
+            </div>
+            <div>
+              <dt className="mb-1">시작일 ~ 종료일</dt>
+              <dd>
+                {formatDate(task.startAt) || '?'} ~ {formatDate(task.endAt) || '?'}
+              </dd>
+            </div>
+          </dl>
+
+          <div className="border-t border-gray-100 dark:border-gray-800" />
           <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs text-gray-500 dark:text-gray-400">
             <div>
               <dt className="mb-1">담당자</dt>
@@ -772,7 +806,7 @@ function TaskFormPage() {
                 {task.assignee ? (
                   <span className={`flex items-center gap-1.5 ${!task.assigneeIsMember ? 'opacity-50' : ''}`}>
                     <Avatar user={task.assignee} />
-                    {task.assignee.name}
+                    <EmailPopover user={task.assignee}>{task.assignee.name}</EmailPopover>
                     {!task.assigneeIsMember && ' (프로젝트 미참여)'}
                   </span>
                 ) : (
@@ -786,7 +820,7 @@ function TaskFormPage() {
                 {task.reviewer ? (
                   <span className={`flex items-center gap-1.5 ${!task.reviewerIsMember ? 'opacity-50' : ''}`}>
                     <Avatar user={task.reviewer} />
-                    {task.reviewer.name}
+                    <EmailPopover user={task.reviewer}>{task.reviewer.name}</EmailPopover>
                     {!task.reviewerIsMember && ' (프로젝트 미참여)'}
                   </span>
                 ) : (
@@ -794,25 +828,11 @@ function TaskFormPage() {
                 )}
               </dd>
             </div>
-            <div>
-              <dt className="mb-1">등록자</dt>
-              <dd>{task.createdBy?.name || '등록자 미상'}</dd>
-            </div>
-            <div>
-              <dt className="mb-1">시작일 ~ 종료일</dt>
-              <dd>
-                {formatDate(task.startAt) || '?'} ~ {formatDate(task.endAt) || '?'}
-              </dd>
-            </div>
-            <div>
-              <dt className="mb-1">등록일</dt>
-              <dd>{formatDate(task.createdAt)}</dd>
-            </div>
           </dl>
 
           <div>
             <p className="mb-1 text-xs text-gray-500 dark:text-gray-400">참조자</p>
-            <FollowerList followers={task.followers || []} />
+            <FollowerList followers={task.followers || []} withEmail />
           </div>
 
           {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}

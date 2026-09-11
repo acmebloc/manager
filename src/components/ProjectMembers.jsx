@@ -82,7 +82,22 @@ export function Avatar({ user }) {
 // pointer never leaves the hoverable area. Driven by explicit state (not
 // CSS-only `:hover`) so clicking copy can dismiss it immediately, even
 // while the mouse is still resting on top.
-export function MemberIdentity({ user, className = '' }) {
+// 이름 위에 마우스를 올리면 이메일과 복사 버튼을 띄운다. **아바타는 그리지
+// 않는다** — 적용할 화면마다 아바타를 그리는 방식이 제각각이기 때문이다(댓글은
+// 아바타가 왼쪽 열에 따로 있고, 워크로드는 이름이 "홍길동 (전 멤버)"처럼 가공된
+// 문자열이다). 그래서 각 화면은 지금 그리던 것을 그대로 children으로 감싸기만 한다.
+//
+// user에 email이 없으면(탈퇴한 사용자, 미배정 행 등) 아무것도 띄우지 않고 children을
+// 그대로 통과시킨다.
+//
+// 네이티브 title 툴팁을 쓰지 않는 이유: 복사 버튼은 눌러야 하는데 title은 그걸
+// 담을 수 없다.
+//
+// 팝오버는 이름 아래가 아니라 **이름 위에 겹쳐서** 띄운다. 아래에 띄우면 그리로
+// 가는 길에 빈 공간을 지나며 hover가 끊겨 복사 버튼을 누르기 전에 닫혔다.
+// 겹쳐두면 포인터가 hover 영역을 벗어나지 않는다. CSS :hover가 아니라 상태로
+// 제어하는 이유는, 복사를 누른 즉시(마우스가 아직 위에 있어도) 닫기 위해서다.
+export function EmailPopover({ user, children, className = '' }) {
   const [hovered, setHovered] = useState(false)
   const [copied, setCopied] = useState(false)
 
@@ -101,31 +116,41 @@ export function MemberIdentity({ user, className = '' }) {
     setHovered(false)
   }
 
-  const showPopover = hovered && user?.email
+  if (!user?.email) return <span className={`inline-flex items-center gap-1.5 ${className}`}>{children}</span>
 
   return (
     <span
-      className={`inline-flex items-center gap-1.5 ${className}`}
+      className={`relative inline-flex items-center gap-1.5 ${className}`}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      <Avatar user={user} />
-      <span className="relative inline-block">
-        <span className="text-sm text-gray-900 dark:text-white">{user?.name}</span>
-        {showPopover && (
-          <span className="absolute left-0 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-200 bg-white px-2 py-1 text-xs shadow-lg dark:border-gray-700 dark:bg-gray-800">
-            <span className="text-gray-600 dark:text-gray-300">{user.email}</span>
-            <button
-              type="button"
-              onClick={copyEmail}
-              className="shrink-0 rounded px-1.5 py-0.5 text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
-            >
-              {copied ? '복사됨' : '복사'}
-            </button>
-          </span>
-        )}
-      </span>
+      {children}
+      {hovered && (
+        <span className="absolute left-0 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-200 bg-white px-2 py-1 text-xs shadow-lg dark:border-gray-700 dark:bg-gray-800">
+          <span className="text-gray-600 dark:text-gray-300">{user.email}</span>
+          <button
+            type="button"
+            onClick={copyEmail}
+            className="shrink-0 rounded px-1.5 py-0.5 text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
+          >
+            {copied ? '복사됨' : '복사'}
+          </button>
+        </span>
+      )}
     </span>
+  )
+}
+
+// 아바타 + 이름 + 이메일 팝오버 묶음. 프로젝트 상세의 PM/PL/멤버 줄용(스펙 4.5).
+export function MemberIdentity({ user, className = '' }) {
+  return (
+    // 아바타까지 EmailPopover 안에 넣는다 — 이름에만 걸면 프로필 이미지 위에서는
+    // 팝오버가 뜨지 않아 예전 동작이 좁아진다(사용자는 "프로필이미지, 이름 위에"
+    // 라고 했다).
+    <EmailPopover user={user} className={className}>
+      <Avatar user={user} />
+      <span className="text-sm text-gray-900 dark:text-white">{user?.name}</span>
+    </EmailPopover>
   )
 }
 
@@ -252,6 +277,10 @@ function ProjectMembers({
   onChange,
   onSave,
   onDiscard,
+  // 프로젝트 수정 모드에서는 상단의 [저장] 하나가 본문과 멤버를 함께 반영하므로
+  // 이 안의 저장/취소는 감춘다 — 저장 버튼이 화면에 둘이면 어느 쪽이 무엇을
+  // 저장하는지 알 수 없다. 변경 요약은 그대로 보여준다.
+  showSaveButtons = true,
 }) {
   const canInviteOrRemove = myRole === 'pm' || myRole === 'pl'
   const canAssignRoles = myRole === 'pm'
@@ -271,6 +300,7 @@ function ProjectMembers({
           <span className="text-xs text-amber-800 dark:text-amber-300">
             저장하지 않은 변경 {diff.count}건 · {summarize(diff)}
           </span>
+          {showSaveButtons && (
           <span className="flex shrink-0 gap-2">
             <button
               type="button"
@@ -289,6 +319,7 @@ function ProjectMembers({
               취소
             </button>
           </span>
+          )}
         </div>
       )}
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { apiFetch } from '../lib/api'
 import { matchesKoreanQuery } from '../lib/korean'
-import { Avatar } from './ProjectMembers'
+import { Avatar, EmailPopover } from './ProjectMembers'
 
 // '@' 태그 입력 — 일감 댓글의 멘션 드롭다운과 시각적으로 통일하되, 마크다운에
 // 박아넣지 않고 선택된 사용자를 칩 목록으로 들고 있는 별도 구현.
@@ -115,14 +115,17 @@ export function FollowerPicker({ members, followers, onChange }) {
   )
 }
 
-export function FollowerList({ followers }) {
+// withEmail은 **기본이 꺼짐**이다 — 이 목록을 일감 상세와 일정 상세 모달이
+// 함께 쓰는데, 이메일 팝오버는 일감 쪽에만 넣기로 했다(사용자 결정). 기본을
+// 켬으로 두면 모달에도 조용히 따라 들어간다.
+export function FollowerList({ followers, withEmail = false }) {
   return (
     <div className="flex flex-wrap gap-2">
       {followers.length === 0 && <span className="text-sm text-gray-400 dark:text-gray-500">없음</span>}
       {followers.map((user) => (
         <span key={user.id} className="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300">
           <Avatar user={user} />
-          {user.name}
+          {withEmail ? <EmailPopover user={user}>{user.name}</EmailPopover> : user.name}
         </span>
       ))}
     </div>

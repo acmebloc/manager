@@ -412,7 +412,10 @@ function TasksPage() {
         view === 'graph' ? 'flex flex-1 flex-col pb-0' : 'pb-8'
       }`}
     >
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+      {/* 뷰 토글은 제목 바로 옆에 붙인다(사용자 요청) — 화면 반대편에 떨어져
+          있으면 "일감"이라는 제목과 "지금 어떤 방식으로 보고 있나"가 시선상
+          이어지지 않는다. justify-between을 쓰지 않으므로 오른쪽은 비워 둔다. */}
+      <div className="mb-4 flex flex-wrap items-center gap-3">
         <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">일감</h2>
         <div className="flex overflow-hidden rounded-md border border-gray-300 dark:border-gray-600">
           {VIEWS.map((v) => (

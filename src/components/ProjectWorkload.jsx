@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { apiFetch } from '../lib/api'
-import { Avatar } from './ProjectMembers'
+import { Avatar, EmailPopover } from './ProjectMembers'
 import { TASK_STATUSES } from '../lib/taskFields'
 
 const EMPTY_COUNTS = Object.fromEntries(TASK_STATUSES.map((s) => [s.value, 0]))
@@ -100,7 +100,10 @@ function ProjectWorkload({ projectId, pm, pl, otherMembers }) {
             <li key={row.key} className="flex flex-wrap items-center gap-3">
               <span className="flex min-w-[8rem] shrink-0 items-center gap-2 text-sm text-gray-900 dark:text-white">
                 <Avatar user={row.user} />
-                {row.name}
+                {/* 미배정·탈퇴 사용자 행은 user가 없거나 email이 없어 팝오버가
+                    그냥 통과한다. row.name은 "(전 멤버)"가 붙은 가공된 문자열이라
+                    그대로 감싸기만 한다. */}
+                <EmailPopover user={row.user}>{row.name}</EmailPopover>
               </span>
               <span className="flex flex-wrap items-center gap-1.5">
                 {TASK_STATUSES.map((s) => (

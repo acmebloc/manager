@@ -115,6 +115,10 @@ function ProjectDetailPage() {
     setDescription(project.description || '')
     setStartAt(project.startAt?.slice(0, 10) || '')
     setEndAt(project.endAt?.slice(0, 10) || '')
+    // 수정 모드에서는 멤버 관리도 함께 열린 채로 시작한다(사용자 요청) —
+    // 프로젝트를 고치러 들어왔는데 멤버만 따로 또 열어야 하는 게 어색했다.
+    // 멤버만 따로 손보는 길(멤버 관리 버튼)은 그대로 남는다.
+    openMembers()
     setEditing(true)
   }
 
@@ -132,7 +136,19 @@ function ProjectDetailPage() {
         },
       })
       setProject((current) => ({ ...current, ...updated }))
+      // 멤버는 본문과 저장 경로가 다르다(멤버마다 별도 요청). 수정 모드에서는
+      // 버튼이 하나뿐이므로 여기서 이어서 보낸다 — 바꾼 게 없으면 아무 요청도
+      // 나가지 않는다. saveMembers는 성공하든 실패하든 마지막에 멤버를 다시
+      // 읽어오므로, 절반만 반영돼도 화면이 서버와 어긋난 채 남지 않는다.
+      if (diff.count > 0 && !(await saveMembers())) {
+        // 본문은 저장됐지만 멤버가 실패했다. 수정 모드를 열어둔 채 멈춘다 —
+        // 닫아버리면 멤버 블록과 함께 실패 메시지도 사라진다. 다시 [저장]을
+        // 누르면 본문은 같은 값으로 한 번 더 저장되고(무해) 멤버만 재시도된다.
+        setError('프로젝트는 저장했지만 멤버 변경을 반영하지 못했습니다. 아래 멤버 영역의 메시지를 확인해주세요')
+        return
+      }
       setEditing(false)
+      setMembersOpen(false)
       setError('')
     } catch (err) {
       setError(err.message)
@@ -200,7 +216,12 @@ function ProjectDetailPage() {
     setMembersOpen(false)
   }
 
+  // 성공했는지 돌려준다 — 프로젝트 수정 모드에서는 이 결과로 화면을 닫을지
+  // 정한다. 예전처럼 에러를 삼키고 끝내면, 호출부가 그대로 수정 모드를 닫아
+  // **멤버 저장 실패 메시지가 화면에서 같이 사라진다**(그 메시지는 멤버 블록
+  // 안에 있는데 블록째 언마운트된다).
   const saveMembers = async () => {
+    let ok = false
     setSavingMembers(true)
     try {
       for (const m of diff.removed) {
@@ -216,6 +237,7 @@ function ProjectDetailPage() {
         })
       }
       setMemberError('')
+      ok = true
     } catch (err) {
       setMemberError(err.message)
     } finally {
@@ -228,6 +250,7 @@ function ProjectDetailPage() {
       }
       setSavingMembers(false)
     }
+    return ok
   }
 
   if (loading) return null
@@ -252,6 +275,35 @@ function ProjectDetailPage() {
     <div className="mx-auto w-full max-w-[1400px] px-4 py-8">
       {editing ? (
         <form onSubmit={save} className="flex flex-col gap-3">
+          {/* 저장·취소는 조회 화면의 수정·보관·삭제와 **같은 자리**에 둔다
+              (사용자 요청). 폼 아래에 있으면 모드를 드나들 때 버튼이 화면
+              위아래로 크게 뛴다. */}
+          <div className="flex items-start justify-between gap-2">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">프로젝트 수정</h2>
+            <div className="flex shrink-0 gap-2">
+              <button
+                type="submit"
+                disabled={!name.trim() || Boolean(dateProblem) || savingMembers}
+                className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+              >
+                {savingMembers ? '저장 중...' : '저장'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  // 본문뿐 아니라 멤버 변경도 함께 버린다 — 수정 모드에서는 둘이
+                  // 한 덩어리로 보이므로 취소도 한 덩어리여야 한다.
+                  discardMembers()
+                  setMembersOpen(false)
+                  setEditing(false)
+                }}
+                className="rounded-md px-3 py-1.5 text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"
+              >
+                취소
+              </button>
+            </div>
+          </div>
+
           <input
             type="text"
             value={name}
@@ -286,22 +338,6 @@ function ProjectDetailPage() {
             </label>
           </div>
           {dateProblem && <p className="text-sm text-red-600 dark:text-red-400">{dateProblem}</p>}
-          <div className="flex gap-2">
-            <button
-              type="submit"
-              disabled={!name.trim() || Boolean(dateProblem)}
-              className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-            >
-              저장
-            </button>
-            <button
-              type="button"
-              onClick={() => setEditing(false)}
-              className="rounded-md px-3 py-1.5 text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"
-            >
-              취소
-            </button>
-          </div>
         </form>
       ) : (
         <div className="flex items-start justify-between gap-4">
@@ -393,7 +429,7 @@ function ProjectDetailPage() {
 
       <div className="mt-6 flex flex-col gap-4">
         <div className="relative flex flex-col gap-4 border-t border-gray-100 pt-6 dark:border-gray-700">
-          {isPmOrPl && (
+          {isPmOrPl && !editing && (
             <button
               type="button"
               onClick={membersOpen ? closeMembers : openMembers}
@@ -442,6 +478,7 @@ function ProjectDetailPage() {
                 onChange={setDraftMembers}
                 onSave={saveMembers}
                 onDiscard={discardMembers}
+                showSaveButtons={!editing}
               />
             )}
           </section>

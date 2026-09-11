@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { apiFetch } from '../lib/api'
 import { extractMentionUserIds } from '../lib/mentions'
-import { Avatar } from './ProjectMembers'
+import { Avatar, EmailPopover } from './ProjectMembers'
 import MarkdownContent from './MarkdownContent'
 import MarkdownEditor from './MarkdownEditor'
 
@@ -43,7 +43,9 @@ function CommentItem({ comment, mentionMembers, mentionUsersById, onSave, onDele
       <Avatar user={comment.author} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-gray-900 dark:text-white">{comment.author?.name}</span>
+          <EmailPopover user={comment.author}>
+            <span className="text-sm font-medium text-gray-900 dark:text-white">{comment.author?.name}</span>
+          </EmailPopover>
           <span className="text-xs text-gray-400 dark:text-gray-500">{formatDateTime(comment.createdAt)}</span>
         </div>
         {editing ? (
