@@ -1,8 +1,9 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { apiFetch } from '../lib/api'
 import { TASK_GRADES, TASK_STATUSES, TASK_TYPES, sortTasks, taskStatusLabel } from '../lib/taskFields'
 import { submitStatusChange } from '../lib/taskReview'
+import { useBoardTouchDrag } from '../lib/useBoardTouchDrag'
 import { Avatar } from '../components/ProjectMembers'
 import TaskRelationBadges from '../components/TaskRelationBadges'
 import ProjectPicker from '../components/ProjectPicker'
@@ -42,15 +43,20 @@ function toListTask(updated) {
   return rest
 }
 
-function TaskCard({ task, draggable, onDragStart, onClick }) {
+// dragging=true면 지금 손가락을 따라다니는 중이라 원래 자리를 흐리게 둔다 —
+// 카드가 두 군데 다 진하게 보이면 어느 게 진짜인지 알 수 없다.
+// select-none/touch-callout: 길게 누르면 iOS가 텍스트 선택 말풍선을 띄우는데,
+// 그게 뜨면 끌기가 그 자리에서 끊긴다.
+function TaskCard({ task, draggable, onDragStart, onClick, touchHandlers, dragging }) {
   return (
     <li
       draggable={draggable}
       onDragStart={draggable ? onDragStart : undefined}
       onClick={onClick}
+      {...touchHandlers}
       className={`flex flex-col gap-1.5 rounded-lg border border-gray-200 bg-white p-3 text-sm shadow-sm dark:border-gray-700 dark:bg-gray-800 ${
-        draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
-      }`}
+        draggable ? 'cursor-grab select-none [-webkit-touch-callout:none] active:cursor-grabbing' : 'cursor-pointer'
+      } ${dragging ? 'opacity-40' : ''}`}
     >
       <p className="text-xs font-medium text-gray-900 dark:text-white">{task.title}</p>
       <div className="flex flex-wrap gap-1 text-xs">
@@ -100,6 +106,13 @@ function ProjectBoard({ section, onNavigateToTask, onRequestStatusChange }) {
   const [statusFilter, setStatusFilter] = useState('')
   const [myTasksOnly, setMyTasksOnly] = useState(false)
   const [dragOverStatus, setDragOverStatus] = useState(null)
+  // 터치는 HTML5 드래그가 아예 발생하지 않아(그 API는 마우스 전용) 따로 다룬다.
+  const { drag, cardHandlers, consumeClickAfterDrag } = useBoardTouchDrag(
+    useCallback(
+      (taskId, status) => onRequestStatusChange(section.projectId, taskId, status),
+      [onRequestStatusChange, section.projectId],
+    ),
+  )
 
   const visibleTasks = useMemo(
     () =>
@@ -152,10 +165,23 @@ function ProjectBoard({ section, onNavigateToTask, onRequestStatusChange }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {/* 좁은 화면에서는 열을 **가로로 나란히** 두고 옆으로 쓸어 본다(트렐로·Jira
+          모바일과 같은 방식). 세로로 쌓으면 실측 기준 문서 높이가 7100px이 되고
+          대기 열 하나가 3000px이라, 대기의 카드를 완료로 끌려면 3800px을 손가락으로
+          끌어야 해서 드래그가 쓸 수 없는 기능이 된다. sm 이상은 예전 그대로 그리드다. */}
+      <div
+        data-board-scroller
+        // 드래그 중에는 스냅을 끈다. 자동 스크롤은 한 번에 14px씩 미는데, 스냅이
+        // 켜져 있으면 그때마다 가장 가까운 열 시작점으로 되돌려버려 **스크롤이
+        // 0에서 한 발짝도 못 나간다**(실측으로 걸렸다).
+        className={`flex gap-3 overflow-x-auto pb-2 sm:grid sm:grid-cols-2 sm:overflow-x-visible sm:pb-0 lg:grid-cols-4 ${
+          drag ? 'snap-none' : 'snap-x'
+        }`}
+      >
         {TASK_STATUSES.map((col) => (
           <div
             key={col.value}
+            data-board-status={col.value}
             onDragOver={(e) => {
               e.preventDefault()
               setDragOverStatus(col.value)
@@ -167,8 +193,10 @@ function ProjectBoard({ section, onNavigateToTask, onRequestStatusChange }) {
               setDragOverStatus(null)
               onRequestStatusChange(section.projectId, taskId, col.value)
             }}
-            className={`flex min-h-[200px] flex-col gap-2 rounded-lg p-2 ${
-              dragOverStatus === col.value ? 'bg-indigo-50 dark:bg-indigo-950/30' : 'bg-gray-50 dark:bg-gray-800/50'
+            className={`flex min-h-[200px] w-[80vw] shrink-0 snap-start flex-col gap-2 rounded-lg p-2 sm:w-auto sm:shrink ${
+              dragOverStatus === col.value || drag?.status === col.value
+                ? 'bg-indigo-50 dark:bg-indigo-950/30'
+                : 'bg-gray-50 dark:bg-gray-800/50'
             }`}
           >
             <h4 className="px-1 text-sm font-medium text-gray-600 dark:text-gray-300">
@@ -184,13 +212,31 @@ function ProjectBoard({ section, onNavigateToTask, onRequestStatusChange }) {
                   // allowedTransitions로 판단한다.
                   draggable={task.allowedTransitions?.length > 0}
                   onDragStart={(e) => e.dataTransfer.setData('text/plain', task.id)}
-                  onClick={() => onNavigateToTask(section.projectId, task.id)}
+                  touchHandlers={cardHandlers(task, task.allowedTransitions?.length > 0)}
+                  dragging={drag?.task.id === task.id}
+                  // 끌어서 옮긴 직후에는 상세로 넘어가지 않는다 — 옮기자마자
+                  // 화면이 그 일감으로 바뀌면 보드로 되돌아와야 한다.
+                  onClick={() => {
+                    if (consumeClickAfterDrag()) return
+                    onNavigateToTask(section.projectId, task.id)
+                  }}
                 />
               ))}
             </ul>
           </div>
         ))}
       </div>
+
+      {/* 손가락을 따라다니는 미리보기. pointer-events-none이라야 손가락 아래의
+          "열"을 찾는 elementFromPoint가 이 카드에 걸리지 않는다. */}
+      {drag && (
+        <div
+          className="pointer-events-none fixed z-50 max-w-[70vw] -translate-x-1/2 -translate-y-1/2 truncate rounded-lg border border-indigo-300 bg-white px-3 py-2 text-xs font-medium text-gray-900 shadow-lg dark:border-indigo-500 dark:bg-gray-800 dark:text-white"
+          style={{ left: drag.x, top: drag.y }}
+        >
+          {drag.task.title}
+        </div>
+      )}
     </section>
   )
 }
