@@ -244,7 +244,7 @@ function Toggle({ checked, onChange, kind, children }) {
 
 function Graph({ projectId }) {
   const navigate = useNavigate()
-  const { fitView } = useReactFlow()
+  const { fitView, zoomIn, zoomOut } = useReactFlow()
   const updateNodeInternals = useUpdateNodeInternals()
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
@@ -420,6 +420,36 @@ function Graph({ projectId }) {
     return () => clearTimeout(id)
   }, [base, fitView])
 
+  // 키보드 +/− 로도 확대·축소한다(사용자 요청). 왼쪽 아래 컨트롤 버튼과 **같은
+  // 함수**를 부르므로 배율 단계도, minZoom/maxZoom 한계도 버튼과 똑같다.
+  //
+  // `=`도 같이 받는다 — 대부분의 자판에서 `+`는 Shift를 눌러야 나오는 자리라
+  // 브라우저·에디터도 관례적으로 둘 다 받는다. 숫자패드의 +/−는 event.key가
+  // 그냥 '+'/'-'로 오므로 따로 볼 필요가 없다.
+  //
+  // 무시해야 하는 경우 두 가지:
+  //   - Ctrl/Cmd/Alt 조합 — 브라우저 확대 같은 다른 단축키다. 가로채면 안 된다.
+  //   - 입력 중 — 헤더의 검색창에 "-"를 쳤는데 뒤에서 그래프가 축소되면 안 된다.
+  useEffect(() => {
+    if (base.nodes.length === 0) return undefined
+    const onKeyDown = (event) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return
+      const target = event.target
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+      ) {
+        return
+      }
+      if (event.key === '+' || event.key === '=') zoomIn()
+      else if (event.key === '-') zoomOut()
+      else return
+      event.preventDefault()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [base.nodes.length, zoomIn, zoomOut])
+
   const setFilter = useCallback((key) => (value) => setFilters((f) => ({ ...f, [key]: value })), [])
 
   if (error) return <p className="py-12 text-center text-sm text-red-600 dark:text-red-400">{error}</p>
@@ -447,6 +477,14 @@ function Graph({ projectId }) {
         <Toggle checked={filters.showIsolated} onChange={setFilter('showIsolated')}>
           관계 없는 일감도 보기
         </Toggle>
+        {/* 키보드 단축키는 눌러보기 전에는 있는 줄 모른다. 필터 줄 오른쪽 끝에
+            (ml-auto) 붙여 캔버스를 가리지 않게 한다. */}
+        <span className="ml-auto text-xs text-gray-400 dark:text-gray-500">
+          <kbd className="rounded border border-gray-300 px-1 dark:border-gray-600">+</kbd>
+          <span className="mx-1">/</span>
+          <kbd className="rounded border border-gray-300 px-1 dark:border-gray-600">-</kbd>
+          <span className="ml-1.5">확대·축소</span>
+        </span>
       </div>
 
       {/* 캔버스는 남은 높이를 전부 쓰고(flex-1 + min-h-0), 페이지 컨테이너
@@ -518,10 +556,12 @@ function Graph({ projectId }) {
                   그 보정이 거꾸로 2배 커 보이는 원인이 됐다. 그래서 크기는 기본값
                   으로 되돌렸다 — **진입 배율을 다시 바꾸면 이 값도 같이 봐야 한다.**
                   투명도는 점을 더 죽이는 대신 관계선 색을 진하게 올려(EDGE_STYLE)
-                  대비를 벌리는 쪽으로 정해서 0.25로 되돌렸다(사용자 결정).
+                  대비를 벌리는 쪽으로 방향을 잡았고, 그 위에서 0.25 → **0.5**로
+                  올렸다(2026-09-11, 사용자 결정). 선이 이미 충분히 진해져서 이
+                  정도로는 파선·점선과 섞이지 않는다.
                   색은 건드리지 않는다 — 투명도만 조절해 React Flow의 테마별
                   기본색(colorMode="system")을 그대로 쓴다. */}
-              <Background gap={20} size={1} className="opacity-25" />
+              <Background gap={20} size={1} className="opacity-50" />
               <Controls showInteractive={false} />
               <MiniMap pannable zoomable nodeColor={MINIMAP_NODE_COLOR} />
             </ReactFlow>
