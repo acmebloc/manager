@@ -1,91 +1,105 @@
-import { useState } from 'react'
-import { apiFetch } from '../lib/api'
-import { TaskChip, TaskLinkSection, TaskPicker } from './TaskLinks'
+import { doneCounterpartReason, notDone } from '../lib/taskFields'
+import { SAVE_NOTICE, TaskChip, TaskLinkSection, TaskPicker } from './TaskLinks'
 
-// 상위 일감(parentTaskId)은 이 일감 자신의 필드라 draft로 관리된다 — 부모
-// 컴포넌트(TaskFormPage)가 staged 상태로 들고 있다가 저장 버튼을 눌러야 실제로
-// PATCH된다(다른 필드들과 동일). 하위 작업(자식)은 반대 방향이다 — "다른
-// 일감이 나를 상위로 가리키는 것"이라, 여기서 고르거나 빼면 그 즉시 그 자식
-// 일감 쪽에 PATCH(parentTaskId)를 보낸다(별도의 하위작업 전용 API 없이 기존
-// PATCH /:id — assertValidParent 검증 포함 — 를 그대로 재사용). taskId가 없으면
-// (아직 저장 전인 새 일감) 하위 작업 자체를 고를 대상이 없으므로 그 부분만 숨긴다.
-function TaskSubtasks({ projectId, taskId, editing, candidates, parentTask, onParentChange, subtasks, onSubtasksChange }) {
-  const [error, setError] = useState('')
+// 계층(상위 일감 / 하위 작업) 두 섹션. 관계(TaskLinks)와 한 상자로 묶는 건
+// 부모(TaskFormPage)가 하므로 여기서는 테두리를 그리지 않고 섹션만 내놓는다.
+//
+// **상위와 하위는 서로를 배제한다.** 계층이 1단계뿐이라(assertValidParent)
+// 상위가 있는 일감은 남의 상위가 될 수 없고, 하위가 있는 일감은 남의 하위가
+// 될 수 없다. 서버는 이미 막고 있었지만 화면이 그걸 반영하지 않아서, 성공할
+// 수 없는 동작을 피커가 계속 제안하고 있었다. 이제 입력창을 **숨기지 않고
+// 비활성**으로 남기고 왜 안 되는지를 placeholder로 알려준다.
+//
+// 두 목록 모두 draft다 — 하위 작업은 상대 일감의 필드지만 저장 버튼을 누를 때
+// 함께 반영된다(TaskFormPage의 applyRelationChanges). 그래서 여기서 판단하는
+// "상위가 있나 / 하위가 있나"는 화면 상태와 항상 일치하고, 예전처럼 화면에서
+// 지운 상위 때문에 서버가 거절하는 일이 없다.
+const PARENT_BLOCKED_PLACEHOLDER = '하위 작업이 있어 상위 일감을 등록할 수 없습니다. 하위 작업을 먼저 삭제하세요'
+const CHILD_BLOCKED_PLACEHOLDER = '상위 일감이 있어 하위 작업을 등록할 수 없습니다. 상위 일감을 먼저 삭제하세요'
 
-  const parentPickCandidates = candidates.filter((t) => t.id !== parentTask?.id)
+function TaskSubtasks({
+  projectId,
+  editing,
+  candidates,
+  parentTask,
+  onParentChange,
+  subtasks,
+  onSubtasksChange,
+  related,
+  lastRemoved,
+  onRemoved,
+}) {
   const total = subtasks.length
   const done = subtasks.filter((t) => t.status === 'done').length
 
-  // onSubtasksChange에 배열을 직접 만들어 넘기면, 픽커에서 연달아 빠르게
-  // 추가/제거했을 때 두 핸들러가 같은 렌더링 시점의(오래된) subtasks를 각자
-  // 붙잡고 있어 나중에 끝난 쪽이 먼저 끝난 쪽의 결과를 덮어써 버린다 — 서버엔
-  // 둘 다 정상 반영됐는데 화면 목록만 하나 누락되는 상태가 된다. React의
-  // 함수형 업데이트로 넘겨 항상 최신 state 기준으로 계산되게 한다.
-  const addChild = async (candidate) => {
-    setError('')
-    try {
-      await apiFetch(`/api/projects/${projectId}/tasks/${candidate.id}`, {
-        method: 'PATCH',
-        body: { parentTaskId: taskId },
-      })
-      onSubtasksChange((current) => [...current, candidate])
-    } catch (err) {
-      setError(err.message)
-    }
-  }
+  const hasChildren = total > 0
+  const childIds = new Set(subtasks.map((t) => t.id))
+  // 연결로 이어진 일감은 계층으로도 걸 수 없다 — 양방향 배타이고 서버가
+  // 강제한다(taskRelationRules.js). 여기서 빼지 않으면 저장할 때 400이 나는데,
+  // 하위 쪽은 patchSelf가 먼저 커밋된 뒤라 절반만 반영된 채 멈춘다.
+  const relatedIds = new Set(related.map((t) => t.id))
 
-  const removeChild = async (childId) => {
-    setError('')
-    try {
-      await apiFetch(`/api/projects/${projectId}/tasks/${childId}`, {
-        method: 'PATCH',
-        body: { parentTaskId: null },
-      })
-      onSubtasksChange((current) => current.filter((t) => t.id !== childId))
-    } catch (err) {
-      setError(err.message)
-    }
-  }
-
-  // 테두리를 그리지 않고 섹션만 내놓는다 — 계층과 관계(TaskLinks)를 한 상자로
-  // 묶는 건 부모(TaskFormPage)가 한다. 그래서 "보여줄 게 없으면 통째로 숨긴다"는
-  // 판단도 부모 몫이고, 여기서는 섹션별로만 숨긴다.
   return (
     <>
-      {/* 조회 중이고 상위 일감이 없으면 "없음"만 남으므로 섹션째 숨긴다 —
+      {/* 조회 중이고 상위 일감이 없으면 보여줄 게 없으므로 섹션째 숨긴다 —
           TaskLinkSection이 스스로 하는 것과 같은 규칙. */}
       {(editing || parentTask) && (
         <div>
           <p className="mb-1 text-xs text-gray-500 dark:text-gray-400">상위 일감</p>
-          {parentTask ? (
+          {parentTask && (
             <ul className="mb-2 flex flex-col gap-1">
-              <TaskChip task={parentTask} projectId={projectId} onRemove={editing ? () => onParentChange(null) : null} />
+              <TaskChip
+                task={parentTask}
+                projectId={projectId}
+                onRemove={
+                  editing
+                    ? () => {
+                        onParentChange(null)
+                        onRemoved('parent')
+                      }
+                    : null
+                }
+                linkToTask={!editing}
+              />
             </ul>
-          ) : (
-            <p className="mb-2 text-xs text-gray-400 dark:text-gray-500">없음</p>
           )}
           {editing && !parentTask && (
-            <TaskPicker candidates={parentPickCandidates} onPick={onParentChange} placeholder="상위 일감 검색" />
+            <TaskPicker
+              candidates={candidates.filter((t) => !relatedIds.has(t.id))}
+              onPick={onParentChange}
+              placeholder={hasChildren ? PARENT_BLOCKED_PLACEHOLDER : '상위 일감 검색'}
+              disabled={hasChildren}
+            />
+          )}
+          {editing && lastRemoved === 'parent' && (
+            <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">{SAVE_NOTICE}</p>
           )}
         </div>
       )}
 
-      {taskId && (
-        <TaskLinkSection
-          title="하위 작업"
-          badge={total > 0 ? `${done}/${total} 완료` : null}
-          projectId={projectId}
-          tasks={subtasks}
-          editing={editing}
-          candidates={candidates}
-          onAdd={addChild}
-          onRemove={removeChild}
-          placeholder="하위 작업으로 추가할 일감 검색"
-          emptyLabel="없음"
-        />
-      )}
-
-      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+      <TaskLinkSection
+        title="하위 작업"
+        badge={total > 0 ? `${done}/${total} 완료` : null}
+        projectId={projectId}
+        tasks={subtasks}
+        editing={editing}
+        // 이미 하위인 일감·상위 일감 자신·연결로 이어진 일감을 후보에서 뺀다.
+        // 완료된 일감도 뺀다 — 하위는 상대의 parentTaskId를 고치는 일이라 상대가
+        // 완료면 서버가 거절한다(taskFields.js의 doneCounterpartReason).
+        candidates={candidates.filter(
+          (t) => !childIds.has(t.id) && t.id !== parentTask?.id && !relatedIds.has(t.id) && notDone(t),
+        )}
+        onAdd={(t) => onSubtasksChange((current) => [...current, t])}
+        onRemove={(id) => {
+          onSubtasksChange((current) => current.filter((t) => t.id !== id))
+          onRemoved('subtasks')
+        }}
+        placeholder={parentTask ? CHILD_BLOCKED_PLACEHOLDER : '하위 작업으로 추가할 일감 검색'}
+        disabled={Boolean(parentTask)}
+        linkTasks={!editing}
+        notice={lastRemoved === 'subtasks' ? SAVE_NOTICE : null}
+        removeBlockedReason={doneCounterpartReason}
+      />
     </>
   )
 }

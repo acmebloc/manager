@@ -28,6 +28,7 @@ import {
   isValidTaskType,
 } from '../lib/taskFields.js'
 import { canDeleteTask, canModifyTask, taskPermissionFlags, taskRoles } from '../lib/taskPermissions.js'
+import { assertRelationExclusivity } from '../lib/taskRelationRules.js'
 import { findBlockingCycle } from '../lib/taskRelations.js'
 import { buildReviewPayload } from '../lib/taskReview.js'
 import { resolveTransition } from '../lib/taskTransitions.js'
@@ -67,10 +68,14 @@ const taskInclude = {
 // 복호화(fieldCrypto.js의 실제 AES 연산)까지 매번 돌게 된다. 권한 판정에 필요한
 // 건 스칼라 reviewerId뿐이고 그건 항상 실려온다.
 //
-// subtasks는 taskInclude에서 상태만 담긴 가벼운 형태로 이미 상속된다 — 이
-// 경로에서 하위 작업 목록 자체를 쓰지는 않지만(TaskSubtasks.jsx가 자식 쪽에
-// 직접 PATCH해서 로컬 state로 관리한다), 칸반이 상태 변경 후 응답으로 카드를
-// 갈아끼울 때 진행률 배지가 사라지지 않으려면 그 값이 같이 와야 한다.
+// subtasks는 taskInclude에서 상태만 담긴 가벼운 형태로 이미 상속된다 — 칸반이
+// 상태 변경 후 응답으로 카드를 갈아끼울 때 진행률 배지가 사라지지 않으려면 그
+// 값이 같이 와야 한다.
+//
+// **여기에 제목까지 실린 형태를 넣지 않는다.** 상세페이지도 하위 작업 목록을
+// 쓰지만(TaskFormPage.jsx), 그건 GET /:id로 이미 받아둔 것을 로컬 state로
+// 들고 있고 쓰기 응답에서는 withSubtasks로 그 값을 지킨다. 목록·보드는 상태만
+// 필요한데 여기에 제목·담당자를 넣으면 카드마다 조인과 복호화가 늘어난다.
 const taskWriteInclude = {
   ...taskInclude,
   reviewer: { select: userSelect },
@@ -224,17 +229,19 @@ async function applyTaskLinks(projectId, taskId, { relatedTaskIds, blockedByTask
 // 기다리는 고리가 되어 "미완료 선행 N" 표시 자체가 무의미해진다(spec 2장).
 // 프로젝트 안의 blocks 링크만 읽어 그래프를 만드는데, 사내 툴 규모에서는
 // 프로젝트당 수십 건이라 저렴하다.
-async function assertNoBlockingCycle(projectId, taskId, blockedByTaskIds) {
+// db로 트랜잭션 클라이언트를 넘기면 그 트랜잭션 안에서 읽는다
+// (withProjectRelationLock 참고) — 락을 잡고 읽어야 검사가 의미가 있다.
+async function assertNoBlockingCycle(projectId, taskId, blockedByTaskIds, db = prisma) {
   if (!Array.isArray(blockedByTaskIds) || blockedByTaskIds.length === 0) return null
 
-  const links = await prisma.taskLink.findMany({
+  const links = await db.taskLink.findMany({
     where: { type: 'blocks', fromTask: { projectId } },
     select: { fromTaskId: true, toTaskId: true },
   })
   const offenderId = findBlockingCycle(links, taskId, blockedByTaskIds)
   if (!offenderId) return null
 
-  const offender = await prisma.task.findUnique({ where: { id: offenderId }, select: { title: true } })
+  const offender = await db.task.findUnique({ where: { id: offenderId }, select: { title: true } })
   return `선행 일감으로 지정하려는 "${offender?.title || '알 수 없음'}"이(가) 이미 이 일감을 기다리고 있어서, 서로 선행이 되는 순환이 생깁니다`
 }
 
@@ -590,6 +597,136 @@ router.get('/:id/links', requireProjectRole('member'), async (req, res) => {
   })
 })
 
+// --- 후행 일감 편집 (선행 링크 한 개만 붙이거나 뗀다) ---
+//
+// 후행("이 일감이 끝나야 시작할 수 있는 일감")을 바꾸는 것은 **상대 일감의 선행
+// 목록**을 바꾸는 일이다. 그래서 경로도 상대 일감(:id) 위에 둔다 — 권한·완료
+// 잠금 판정이 자연히 상대 일감 기준이 되고, 하위 작업이 상대에게
+// PATCH parentTaskId를 보내는 것과 같은 모양이 된다.
+//
+// **왜 PATCH /:id { blockedByTaskIds }를 쓰지 않는가**: 그 경로는 선행 목록을
+// **통째로 교체**한다(applyTaskLinks의 deleteMany + createMany). 내 화면에서
+// 후행을 편집하려고 상대 일감에 그걸 보내면, 내가 편집하는 동안 다른 사람이
+// 그 일감에 추가한 선행이 조용히 사라진다(lost update). 링크 한 개만 다루는
+// 이 경로는 덮어쓸 것이 없다.
+//
+// 두 핸들러가 같은 검사를 하므로 앞부분을 함께 쓴다. 통과하면 상대 일감 행을,
+// 막히면 이미 응답을 보낸 뒤 null을 돌려준다.
+async function loadSuccessorForLinkEdit(req, res) {
+  const successor = await prisma.task.findFirst({
+    where: { id: req.params.id, projectId: req.params.projectId },
+  })
+  if (!successor) {
+    res.status(404).json({ error: 'Not found' })
+    return null
+  }
+  // 선행 목록은 그 일감의 필드다(EDITABLE_FIELD_KEYS) — 완료 잠금과 수정 권한이
+  // PATCH로 고칠 때와 똑같이 적용돼야 한다.
+  if (successor.status === 'done') {
+    res.status(409).json({ error: DONE_LOCK_MESSAGE })
+    return null
+  }
+  if (!canModifyTask(successor, req.user, req.projectAccess)) {
+    res.status(403).json({ error: 'Forbidden' })
+    return null
+  }
+  if (req.params.predecessorId === successor.id) {
+    res.status(400).json({ error: '자기 자신을 선행 일감으로 지정할 수 없습니다' })
+    return null
+  }
+  return successor
+}
+
+// 순환·배타 검사는 "읽고 나서 쓴다"라 두 요청이 겹치면 **둘 다 검사를 통과한 뒤
+// 둘 다 써서** 금지된 상태가 만들어진다. 실측: 아무 링크도 없는 A/B에
+// `POST A/blocked-by/B`와 `POST B/blocked-by/A`를 동시에 보내면 둘 다 204를
+// 받고 순환 두 줄이 DB에 남았다.
+//
+// 그래서 같은 프로젝트의 관계 쓰기는 한 번에 하나만 돌게 한다. 락은 트랜잭션이
+// 끝날 때 자동으로 풀리고(pg_advisory_xact_lock), 프로젝트별로 걸리므로 다른
+// 프로젝트의 작업을 기다리게 만들지 않는다. 임계구역 안의 조회는 전부 tx로
+// 해야 한다 — 공용 클라이언트로 읽으면 다른 커넥션이라 락 밖에서 읽는 셈이다.
+//
+// PATCH /:id의 관계 교체에는 같은 경합이 남아 있다(이 작업 전부터 있던 것).
+// 거기까지 이 락으로 감싸면 프로젝트 안의 일감 수정이 전부 직렬화돼서, 막으려는
+// 문제보다 부하 영향이 크다. 만들어지는 상태도 되돌릴 수 없는 종류는 아니다 —
+// 제거 경로에는 순환 검사가 없어 화면에서 어느 쪽이든 지울 수 있다.
+// **락을 기다리는 시간도 트랜잭션 제한에 포함된다.** 제한을 넘기면 Prisma가
+// P2028을 던지는데, 전역 에러 핸들러는 무엇이 오든 500으로 내보내므로 "잠시 후
+// 다시 시도" 상황이 서버 오류로 보인다. 그래서 제한을 기본 5초보다 넉넉히 두고,
+// 그래도 넘치면 호출부가 409로 바꿀 수 있게 표시해서 돌려준다.
+// (임계구역 자체는 조회 서너 개다 — 20건 동시 요청 실측 124ms.)
+const RELATION_LOCK_TIMEOUT_MS = 15000
+const LOCK_BUSY = Symbol('relation-lock-busy')
+
+async function withProjectRelationLock(projectId, fn) {
+  try {
+    return await prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`task-relations:${projectId}`}))`
+        return fn(tx)
+      },
+      { timeout: RELATION_LOCK_TIMEOUT_MS },
+    )
+  } catch (err) {
+    if (err?.code === 'P2028') return LOCK_BUSY
+    throw err
+  }
+}
+
+router.post('/:id/blocked-by/:predecessorId', requireProjectRole('member'), async (req, res) => {
+  const successor = await loadSuccessorForLinkEdit(req, res)
+  if (!successor) return
+
+  const [valid] = await sameProjectTaskIds(req.params.projectId, successor.id, [req.params.predecessorId])
+  if (!valid) return res.status(400).json({ error: '선행 일감으로 지정하려는 일감이 같은 프로젝트 안에 없습니다' })
+
+  const problem = await withProjectRelationLock(req.params.projectId, async (tx) => {
+    // 이 링크가 더해진 뒤의 목록으로 순환·배타를 검사한다 — PATCH가 하는 검사와
+    // 같은 함수를 쓰므로 두 경로의 판정이 갈리지 않는다.
+    const current = await tx.taskLink.findMany({
+      where: { type: 'blocks', toTaskId: successor.id },
+      select: { fromTaskId: true },
+    })
+    const nextBlockedBy = [...new Set([...current.map((r) => r.fromTaskId), valid])]
+
+    const cycleProblem = await assertNoBlockingCycle(req.params.projectId, successor.id, nextBlockedBy, tx)
+    if (cycleProblem) return cycleProblem
+    const exclusivityProblem = await assertRelationExclusivity(
+      successor.id,
+      { blockedByTaskIds: nextBlockedBy },
+      successor,
+      tx,
+    )
+    if (exclusivityProblem) return exclusivityProblem
+
+    // 이미 있으면 조용히 통과 — 같은 편집을 두 번 저장해도 실패하지 않는다
+    // (유니크 제약이 (from, to, type)이므로 createMany + skipDuplicates로 충분).
+    await tx.taskLink.createMany({
+      data: [{ fromTaskId: valid, toTaskId: successor.id, type: 'blocks' }],
+      skipDuplicates: true,
+    })
+    return null
+  })
+  if (problem === LOCK_BUSY) {
+    return res.status(409).json({ error: '다른 관계 변경이 처리 중입니다. 잠시 후 다시 시도해주세요' })
+  }
+  if (problem) return res.status(400).json({ error: problem })
+
+  res.status(204).end()
+})
+
+router.delete('/:id/blocked-by/:predecessorId', requireProjectRole('member'), async (req, res) => {
+  const successor = await loadSuccessorForLinkEdit(req, res)
+  if (!successor) return
+
+  // 없는 링크를 지워도 204 — 화면이 이미 지운 상태를 다시 저장하는 경우가 있다.
+  await prisma.taskLink.deleteMany({
+    where: { type: 'blocks', fromTaskId: req.params.predecessorId, toTaskId: successor.id },
+  })
+  res.status(204).end()
+})
+
 // 새 일감은 검수 이력 없이 만들어지므로 검수중/완료로는 시작할 수 없다 —
 // 그 두 상태는 반드시 전이(=이력 등록)를 거쳐야만 도달한다.
 const CREATABLE_STATUSES = ['todo', 'doing']
@@ -626,6 +763,14 @@ router.post('/', requireProjectRole('member'), async (req, res) => {
   if (dateProblem) return res.status(400).json({ error: dateProblem })
   const periodProblem = assertWithinProjectPeriod(req.projectAccess.project, startAt, endAt)
   if (periodProblem) return res.status(400).json({ error: periodProblem })
+
+  // 연결 일감이 다른 관계와 겹치는지 — 신규 생성에도 관계를 함께 보낼 수 있다.
+  const exclusivityProblem = await assertRelationExclusivity(
+    null,
+    { parentTaskId, relatedTaskIds, blockedByTaskIds },
+    null,
+  )
+  if (exclusivityProblem) return res.status(400).json({ error: exclusivityProblem })
 
   const problem = await assertProjectMember(req.params.projectId, assigneeId, null, ASSIGNEE_NOT_MEMBER)
   if (problem) return res.status(400).json({ error: problem })
@@ -806,6 +951,13 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
     )
     if (parentProblem) return res.status(400).json({ error: parentProblem })
   }
+
+  const exclusivityProblem = await assertRelationExclusivity(
+    req.params.id,
+    { parentTaskId, relatedTaskIds, blockedByTaskIds },
+    existing,
+  )
+  if (exclusivityProblem) return res.status(400).json({ error: exclusivityProblem })
 
   if (blockedByTaskIds !== undefined) {
     const cycleProblem = await assertNoBlockingCycle(req.params.projectId, req.params.id, blockedByTaskIds)

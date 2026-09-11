@@ -97,3 +97,16 @@ export function sortTasks(tasks) {
     return new Date(a.createdAt) - new Date(b.createdAt)
   })
 }
+
+// 하위 작업과 후행 일감은 **상대 일감의 필드**를 고쳐야 반영된다(그 일감의
+// parentTaskId, 그 일감의 선행 목록). 그래서 완료 잠금도 상대 기준이다 — 상대가
+// 완료면 서버가 409로 거절한다.
+//
+// 그걸 화면에서 미리 막지 않으면 저장이 통째로 멈춘다. 다섯 관계가 모두 draft라
+// 저장 한 번에 여러 요청이 순서대로 나가는데, 완료된 하위를 제거하는 요청이 가장
+// 먼저 나가서 거기서 실패하면 **제목 수정조차 서버에 닿지 못한다.** 그래서
+// 완료된 일감은 하위 작업·후행 일감 후보에서 빼고(notDone), 이미 걸려 있으면
+// 제거 버튼을 비활성으로 두고 이유를 붙인다(doneCounterpartReason).
+export const DONE_COUNTERPART_REASON = '완료된 일감이라 지금은 관계를 바꿀 수 없습니다. 그 일감을 진행중으로 되돌린 뒤 다시 시도해주세요'
+export const doneCounterpartReason = (task) => (task.status === 'done' ? DONE_COUNTERPART_REASON : null)
+export const notDone = (task) => task.status !== 'done'
