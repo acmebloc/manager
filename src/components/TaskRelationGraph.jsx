@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Background,
@@ -9,6 +9,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  useUpdateNodeInternals,
 } from '@xyflow/react'
 import dagre from 'dagre'
 import '@xyflow/react/dist/style.css'
@@ -77,6 +78,33 @@ const EDGE_STYLE = {
 // 둔다 — 상태색까지 미니맵에 넣으면 축소된 크기에서 구분이 안 된다.
 const MINIMAP_NODE_COLOR = '#94a3b8'
 
+// 관계별로 핸들(선이 붙는 점)을 따로 둔다. 하나의 핸들을 공유하면 같은 쌍에
+// 상위와 선행이 함께 걸렸을 때 두 선이 **완전히 겹쳐** 한 줄로 보인다(실측:
+// 굵은 실선이 파선을 덮어 계층 관계가 화면에서 사라졌고, "상위/하위" 필터를
+// 꺼도 눈에 보이는 변화가 없었다).
+//
+// 순서는 고정이다 — 왼쪽(들어오는) 선행·상위·연결, 오른쪽(나가는) 후행·하위·연결.
+// 관계마다 자리가 정해져 있으니 어느 노드에서든 같은 관계는 같은 순서로 놓인다.
+// 다만 높이까지 같지는 않다 — 배치는 노드마다, 방향마다 **그 노드에 실제로 걸린
+// 관계 개수**를 기준으로 하므로, 나가는 관계가 셋인 노드의 blocks(11)와 들어오는
+// 관계가 하나인 노드의 blocks(23)를 이으면 선이 약간 기울어진다. 겹침을 없애는
+// 것이 목적이므로 그건 감수한다.
+const HANDLE_ORDER = ['blocks', 'parent', 'related']
+
+// 켜진 관계만 골라 노드 높이 가운데를 기준으로 균등 배치한다. 간격 12px이면
+// 1개는 가운데(23), 2개는 17/29, 3개는 11/23/35에 놓인다.
+const HANDLE_PITCH = 12
+
+function handleOffsets(kinds) {
+  const shown = kinds ? HANDLE_ORDER.filter((kind) => kinds.has(kind)) : []
+  const center = NODE_HEIGHT / 2
+  const offsets = {}
+  shown.forEach((kind, i) => {
+    offsets[kind] = center + (i - (shown.length - 1) / 2) * HANDLE_PITCH
+  })
+  return offsets
+}
+
 function TaskNode({ data }) {
   return (
     <div
@@ -84,11 +112,33 @@ function TaskNode({ data }) {
         STATUS_NODE_CLASS[data.status] || STATUS_NODE_CLASS.todo
       } ${data.dimmed ? 'opacity-25' : ''}`}
     >
-      {/* 화살표가 붙는 지점. 좌→우 레이아웃이라 왼쪽으로 들어와 오른쪽으로 나간다. */}
-      <Handle type="target" position={Position.Left} className="!h-1.5 !w-1.5 !border-0 !bg-gray-300" />
+      {/* 꺼진 관계의 핸들은 렌더하지 않는다 — 남겨두면 선 없는 점이 떠 있다.
+          핸들 위치가 바뀌면 React Flow가 DOM을 다시 재야 하므로(엣지 경로를
+          handleBounds에서 계산한다) Graph에서 updateNodeInternals를 부른다. */}
+      {HANDLE_ORDER.map((kind) => (
+        <Fragment key={kind}>
+          {data.handleTops.target[kind] !== undefined && (
+            <Handle
+              id={`${kind}-target`}
+              type="target"
+              position={Position.Left}
+              style={{ top: data.handleTops.target[kind] }}
+              className="!h-1.5 !w-1.5 !border-0 !bg-gray-300"
+            />
+          )}
+          {data.handleTops.source[kind] !== undefined && (
+            <Handle
+              id={`${kind}-source`}
+              type="source"
+              position={Position.Right}
+              style={{ top: data.handleTops.source[kind] }}
+              className="!h-1.5 !w-1.5 !border-0 !bg-gray-300"
+            />
+          )}
+        </Fragment>
+      ))}
       <p className="truncate text-xs leading-4 font-medium text-gray-900 dark:text-white">{data.title}</p>
       <p className="text-[10px] leading-4 text-gray-400 dark:text-gray-500">{taskStatusLabel(data.status)}</p>
-      <Handle type="source" position={Position.Right} className="!h-1.5 !w-1.5 !border-0 !bg-gray-300" />
     </div>
   )
 }
@@ -195,6 +245,7 @@ function Toggle({ checked, onChange, kind, children }) {
 function Graph({ projectId }) {
   const navigate = useNavigate()
   const { fitView } = useReactFlow()
+  const updateNodeInternals = useUpdateNodeInternals()
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
   const [hoveredId, setHoveredId] = useState(null)
@@ -268,6 +319,23 @@ function Graph({ projectId }) {
       link(e.target, e.source)
     }
 
+    // 켜진 관계만 핸들을 갖는다 — 필터를 끄면 그 선과 점이 함께 사라지고,
+    // 남은 관계들이 가운데로 다시 모인다.
+    // 핸들은 **그 노드가 실제로 가진 관계**만 만든다. 켜진 필터 기준으로 만들면
+    // 관계가 하나도 없는 노드에도 점이 세 개 붙는다(실측으로 확인한 버그).
+    // 왼쪽(들어오는)과 오른쪽(나가는)을 따로 센다 — 선행만 있고 후행은 없는
+    // 노드는 왼쪽에만 점이 생겨야 한다.
+    const kindsIn = new Map()
+    const kindsOut = new Map()
+    const mark = (map, id, kind) => {
+      if (!map.has(id)) map.set(id, new Set())
+      map.get(id).add(kind)
+    }
+    for (const e of shownLinks) {
+      mark(kindsOut, e.source, e.kind)
+      mark(kindsIn, e.target, e.kind)
+    }
+
     const shown = filters.showIsolated ? visibleTasks : visibleTasks.filter((t) => neighboursOf.has(t.id))
     // neighboursOf에 없으면 이 화면에서 아무것과도 이어지지 않은 일감이다.
     const isolatedIds = new Set(shown.filter((t) => !neighboursOf.has(t.id)).map((t) => t.id))
@@ -281,7 +349,15 @@ function Graph({ projectId }) {
             position: { x: 0, y: 0 },
             width: NODE_WIDTH,
             height: NODE_HEIGHT,
-            data: { title: task.title, status: task.status, dimmed: false },
+            data: {
+              title: task.title,
+              status: task.status,
+              dimmed: false,
+              handleTops: {
+                target: handleOffsets(kindsIn.get(task.id)),
+                source: handleOffsets(kindsOut.get(task.id)),
+              },
+            },
           })),
           shownLinks,
           isolatedIds,
@@ -314,6 +390,9 @@ function Graph({ projectId }) {
         id: `${e.kind}-${e.source}-${e.target}-${i}`,
         source: e.source,
         target: e.target,
+        // 관계마다 다른 핸들에 붙어야 같은 쌍의 두 선이 겹치지 않는다.
+        sourceHandle: `${e.kind}-source`,
+        targetHandle: `${e.kind}-target`,
         // 연결 일감은 방향이 없는 대칭 관계라 화살촉을 붙이지 않는다.
         markerEnd: e.kind === 'related' ? undefined : { type: 'arrowclosed', color: EDGE_STYLE[e.kind].stroke },
         style: {
@@ -323,6 +402,15 @@ function Graph({ projectId }) {
       })),
     }
   }, [base, adjacency, hoveredId])
+
+  // React Flow는 엣지 경로를 **DOM에서 잰 핸들 위치**로 계산하고 그 값을
+  // 캐시한다. 필터를 켜고 끄면 핸들이 위/아래로 움직이는데, 그것만으로는
+  // 재측정이 일어나지 않아 선이 옛 위치에 붙어 있게 된다. 그래서 직접 알린다.
+  // (즉시 이동이라 토글할 때 한 번만 부르면 되고, 프레임마다 부를 일이 없다.)
+  useEffect(() => {
+    if (base.nodes.length === 0) return
+    updateNodeInternals(base.nodes.map((n) => n.id))
+  }, [base, updateNodeInternals])
 
   // 필터를 바꾸면 그래프 크기가 달라지므로 화면에 다시 맞춘다. base가 바뀔
   // 때만 — hover로 흐려지는 것까지 화면을 다시 맞추면 눈이 어지럽다.
