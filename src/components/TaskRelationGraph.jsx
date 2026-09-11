@@ -478,12 +478,15 @@ function Graph({ projectId }) {
           관계 없는 일감도 보기
         </Toggle>
         {/* 키보드 단축키는 눌러보기 전에는 있는 줄 모른다. 필터 줄 오른쪽 끝에
-            (ml-auto) 붙여 캔버스를 가리지 않게 한다. */}
-        <span className="ml-auto text-xs text-gray-400 dark:text-gray-500">
+            (ml-auto) 붙여 캔버스를 가리지 않게 한다.
+            키 모양(테두리 두른 네모)만 있으면 **눌러야 하는 버튼으로 읽힌다**
+            (사용자 지적) — 바로 왼쪽이 실제로 누르는 필터 체크박스라 더 그렇다.
+            그래서 앞에 "키보드"를 붙여 무엇을 누르라는 건지 먼저 밝힌다. */}
+        <span className="ml-auto flex items-center gap-1 text-xs text-gray-400 dark:text-gray-500">
+          키보드
           <kbd className="rounded border border-gray-300 px-1 dark:border-gray-600">+</kbd>
-          <span className="mx-1">/</span>
+          <span>/</span>
           <kbd className="rounded border border-gray-300 px-1 dark:border-gray-600">-</kbd>
-          <span className="ml-1.5">확대·축소</span>
         </span>
       </div>
 
