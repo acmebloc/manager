@@ -169,13 +169,23 @@ async function applyRelationChanges(projectId, taskId, before, after, patchSelf)
 // `excludeUserId`로 상대 역할(담당자↔검수자)에 이미 배정된 사람을 목록에서
 // 뺀다 — 담당자와 검수자는 같은 사람일 수 없고(서버도 막는다), 애초에 고를 수
 // 없게 하는 쪽이 저장 후 에러를 보는 것보다 낫다.
+// 탈퇴한 사용자도 목록에서 뺀다 — 새로 배정해봐야 볼 사람이 없다. 다만 **이미
+// 배정돼 있던 사람**은 아래에서 다시 끼워 넣는다(프로젝트를 나간 담당자와 같은
+// 취급): 목록에서 사라지면 저장할 때 배정이 조용히 풀린다.
 function buildPersonOptions(members, current, emptyLabel, excludeUserId) {
   const options = [
     { value: '', label: emptyLabel },
-    ...members.filter((m) => m.id !== excludeUserId).map((m) => ({ value: m.id, label: m.name })),
+    ...members
+      .filter((m) => m.id !== excludeUserId && !m.isDeactivated)
+      .map((m) => ({ value: m.id, label: m.name })),
   ]
-  if (current?.id && current.id !== excludeUserId && !members.some((m) => m.id === current.id)) {
-    options.push({ value: current.id, label: `${current.name} (프로젝트 미참여)` })
+  // **목록에 없으면 다시 끼워 넣는다.** 프로젝트를 나갔거나 탈퇴한 경우인데, 둘 다
+  // 위 filter에서 빠지므로 members에 있는지가 아니라 **options에 있는지**로 판단해야
+  // 한다(탈퇴자는 members에는 그대로 남아 있다). 안 그러면 select에 없는 값이 되어
+  // 저장할 때 배정이 조용히 풀린다.
+  if (current?.id && current.id !== excludeUserId && !options.some((o) => o.value === current.id)) {
+    const suffix = current.isDeactivated ? '탈퇴' : '프로젝트 미참여'
+    options.push({ value: current.id, label: `${current.name} (${suffix})` })
   }
   return options
 }
@@ -286,6 +296,26 @@ function TaskFormPage() {
   const setBlockingTasks = (updater) => setDraft((d) => ({ ...d, blockingTasks: updater(d.blockingTasks) }))
 
   const memberUsers = useMemo(() => members.map((m) => m.user), [members])
+  // **담당자·검수자는 참조자가 될 수 없다**(사용자 결정). 이미 역할이 있는 사람에게
+  // "지켜보는 사람" 자격을 또 주는 건 뜻이 겹친다.
+  //
+  // 저장할 때 걸러내지 않고 **draft에서 파생**시키는 이유: 담당자를 바꾸는 순간
+  // 그 사람이 참조자에서 빠지는 게 눈에 보여야 한다. 저장 후에야 사라지면 왜
+  // 없어졌는지 알 수 없다.
+  const followerDraft = useMemo(
+    () => draft.followers.filter((f) => f.id !== draft.assigneeId && f.id !== draft.reviewerId),
+    [draft.followers, draft.assigneeId, draft.reviewerId],
+  )
+  // 참조자 후보에서 탈퇴자와 이미 역할이 있는 사람을 뺀다. 탈퇴자는 알림을 받아도
+  // 볼 사람이 없다 — 전체 사용자 검색(/api/users)은 이미 서버가 걸러내는데,
+  // 이 목록은 프로젝트 멤버에서 오므로 여기서 걸러야 한다.
+  const followerCandidates = useMemo(
+    () =>
+      memberUsers.filter(
+        (m) => !m.isDeactivated && m.id !== draft.assigneeId && m.id !== draft.reviewerId,
+      ),
+    [memberUsers, draft.assigneeId, draft.reviewerId],
+  )
   const mentionUsersById = useMemo(() => new Map(memberUsers.map((m) => [m.id, m])), [memberUsers])
   const assigneeOptions = useMemo(
     () => buildPersonOptions(memberUsers, task?.assignee, '미배정', draft.reviewerId || null),
@@ -353,7 +383,7 @@ function TaskFormPage() {
         parentTaskId: draft.parentTask?.id || null,
         relatedTaskIds: newLinks.related.map((t) => t.id),
         blockedByTaskIds: newLinks.blockedBy.map((t) => t.id),
-        followerIds: draft.followers.map((f) => f.id),
+        followerIds: followerDraft.map((f) => f.id),
       }
       if (isNew) {
         const created = await apiFetch(`/api/projects/${projectId}/tasks`, { method: 'POST', body })
@@ -620,12 +650,6 @@ function TaskFormPage() {
           </div>
 
           <div className="flex gap-2">
-            <div className="flex-1 text-xs text-gray-500 dark:text-gray-400">
-              등록일
-              <p className="mt-1 rounded-md border border-transparent px-3 py-1.5 text-sm text-gray-500 dark:text-gray-400">
-                {isNew ? formatDate(new Date().toISOString()) : formatDate(task.createdAt)}
-              </p>
-            </div>
             <label className="flex-1 text-xs text-gray-500 dark:text-gray-400">
               시작일
               <input
@@ -691,8 +715,8 @@ function TaskFormPage() {
           <div>
             <p className="mb-1 text-xs text-gray-500 dark:text-gray-400">참조자</p>
             <FollowerPicker
-              members={memberUsers}
-              followers={draft.followers}
+              members={followerCandidates}
+              followers={followerDraft}
               onChange={(followers) => setDraft((d) => ({ ...d, followers }))}
             />
           </div>
@@ -762,7 +786,7 @@ function TaskFormPage() {
               </span>
             )}
             <span className="ml-auto text-gray-500 dark:text-gray-400">
-              등록자 {task.createdBy?.name || '미상'}
+              등록자 : {task.createdBy?.name || '미상'}
             </span>
           </div>
 
@@ -775,14 +799,7 @@ function TaskFormPage() {
             </p>
           )}
 
-          {/* 내용이 비어 있으면 이 구간을 통째로 건너뛴다 — 안 그러면 구분선
-              두 개가 맞붙어 빈 띠처럼 보인다. */}
-          {task.description && (
-            <>
-              <div className="border-t border-gray-100 dark:border-gray-800" />
-              <MarkdownContent text={task.description} mentionUsersById={mentionUsersById} />
-            </>
-          )}
+          {task.description && <MarkdownContent text={task.description} mentionUsersById={mentionUsersById} />}
 
           <div className="border-t border-gray-100 dark:border-gray-800" />
           <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs text-gray-500 dark:text-gray-400">
@@ -804,9 +821,15 @@ function TaskFormPage() {
               <dt className="mb-1">담당자</dt>
               <dd className="flex items-center gap-1.5">
                 {task.assignee ? (
-                  <span className={`flex items-center gap-1.5 ${!task.assigneeIsMember ? 'opacity-50' : ''}`}>
-                    <Avatar user={task.assignee} />
-                    <EmailPopover user={task.assignee}>{task.assignee.name}</EmailPopover>
+                  <span
+                    className={`flex items-center gap-1.5 ${
+                      !task.assigneeIsMember || task.assignee.isDeactivated ? 'opacity-50' : ''
+                    }`}
+                  >
+                    <EmailPopover user={task.assignee}>
+                      <Avatar user={task.assignee} />
+                      {task.assignee.name}
+                    </EmailPopover>
                     {!task.assigneeIsMember && ' (프로젝트 미참여)'}
                   </span>
                 ) : (
@@ -818,9 +841,15 @@ function TaskFormPage() {
               <dt className="mb-1">검수자</dt>
               <dd className="flex items-center gap-1.5">
                 {task.reviewer ? (
-                  <span className={`flex items-center gap-1.5 ${!task.reviewerIsMember ? 'opacity-50' : ''}`}>
-                    <Avatar user={task.reviewer} />
-                    <EmailPopover user={task.reviewer}>{task.reviewer.name}</EmailPopover>
+                  <span
+                    className={`flex items-center gap-1.5 ${
+                      !task.reviewerIsMember || task.reviewer.isDeactivated ? 'opacity-50' : ''
+                    }`}
+                  >
+                    <EmailPopover user={task.reviewer}>
+                      <Avatar user={task.reviewer} />
+                      {task.reviewer.name}
+                    </EmailPopover>
                     {!task.reviewerIsMember && ' (프로젝트 미참여)'}
                   </span>
                 ) : (

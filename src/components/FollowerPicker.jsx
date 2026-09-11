@@ -123,9 +123,23 @@ export function FollowerList({ followers, withEmail = false }) {
     <div className="flex flex-wrap gap-2">
       {followers.length === 0 && <span className="text-sm text-gray-400 dark:text-gray-500">없음</span>}
       {followers.map((user) => (
-        <span key={user.id} className="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300">
-          <Avatar user={user} />
-          {withEmail ? <EmailPopover user={user}>{user.name}</EmailPopover> : user.name}
+        <span
+          key={user.id}
+          className={`flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 ${
+            user.isDeactivated ? 'opacity-50' : ''
+          }`}
+        >
+          {withEmail ? (
+            <EmailPopover user={user}>
+              <Avatar user={user} />
+              {user.name}
+            </EmailPopover>
+          ) : (
+            <>
+              <Avatar user={user} />
+              {user.name}
+            </>
+          )}
         </span>
       ))}
     </div>

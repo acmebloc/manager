@@ -316,6 +316,20 @@ function assertAssigneeReviewerDistinct(assigneeId, reviewerId) {
 // 적용되지 않는다" 패턴). 일정의 참조자와 달리 전체 사용자 범위는 없다.
 // applyTaskLinks처럼 삭제+생성을 한 트랜잭션으로 묶어, 중간에 실패해도 참조자가
 // 비어버린 상태로 남지 않게 한다.
+// 담당자·검수자는 참조자가 될 수 없다(사용자 결정) — 역할이 이미 있는 사람에게
+// "지켜보는 사람" 자격을 또 주는 건 뜻이 겹친다. 화면은 후보에서 빼지만 API를
+// 직접 부르는 경로도 있으므로 여기서도 막는다. 조용히 빼지 않고 거절하는 이유:
+// 담당자·검수자 검증(assertProjectMember)이 400으로 거절하는 것과 같은 기준이고,
+// 조용히 빼면 "저장은 됐는데 참조자가 사라졌다"가 된다.
+function assertFollowersNotAssigned(followerIds, assigneeId, reviewerId) {
+  if (!Array.isArray(followerIds)) return null
+  const clash = followerIds.find((id) => id && (id === assigneeId || id === reviewerId))
+  if (!clash) return null
+  return clash === assigneeId
+    ? '담당자는 참조자로 함께 등록할 수 없습니다'
+    : '검수자는 참조자로 함께 등록할 수 없습니다'
+}
+
 async function applyTaskFollowers(projectId, taskId, followerIds) {
   if (!Array.isArray(followerIds)) return
   const unique = [...new Set(followerIds.filter((id) => typeof id === 'string'))]
@@ -816,6 +830,9 @@ router.post('/', requireProjectRole('member'), async (req, res) => {
   const distinctProblem = assertAssigneeReviewerDistinct(assigneeId, reviewerId)
   if (distinctProblem) return res.status(400).json({ error: distinctProblem })
 
+  const followerProblem = assertFollowersNotAssigned(followerIds, assigneeId, reviewerId)
+  if (followerProblem) return res.status(400).json({ error: followerProblem })
+
   const parentProblem = await assertValidParent(req.params.projectId, null, parentTaskId, null)
   if (parentProblem) return res.status(400).json({ error: parentProblem })
 
@@ -970,6 +987,11 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
 
   const nextAssigneeId = assigneeId !== undefined ? assigneeId || null : existing.assigneeId
   const nextReviewerId = reviewerId !== undefined ? reviewerId || null : existing.reviewerId
+  // PATCH는 담당자만 바꾸는 요청도 있으므로 **이번 요청이 끝난 뒤의 값**(next*)으로
+  // 본다 — 참조자를 안 보냈어도 담당자를 참조자로 바꿔놓는 요청을 잡아야 한다.
+  const followerProblem = assertFollowersNotAssigned(followerIds, nextAssigneeId, nextReviewerId)
+  if (followerProblem) return res.status(400).json({ error: followerProblem })
+
   const distinctProblem = assertAssigneeReviewerDistinct(nextAssigneeId, nextReviewerId)
   if (distinctProblem) return res.status(400).json({ error: distinctProblem })
 

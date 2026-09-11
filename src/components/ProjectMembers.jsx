@@ -147,7 +147,10 @@ export function MemberIdentity({ user, className = '' }) {
     // 아바타까지 EmailPopover 안에 넣는다 — 이름에만 걸면 프로필 이미지 위에서는
     // 팝오버가 뜨지 않아 예전 동작이 좁아진다(사용자는 "프로필이미지, 이름 위에"
     // 라고 했다).
-    <EmailPopover user={user} className={className}>
+    //
+    // 탈퇴한 사용자는 흐리게 둔다 — 이름은 이미 서버가 "비활성화된 사용자"로
+    // 바꿔 보내고 이메일도 비워서 팝오버가 뜨지 않는다(fieldCrypto의 decryptUser).
+    <EmailPopover user={user} className={`${user?.isDeactivated ? 'opacity-50' : ''} ${className}`}>
       <Avatar user={user} />
       <span className="text-sm text-gray-900 dark:text-white">{user?.name}</span>
     </EmailPopover>

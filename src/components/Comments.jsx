@@ -40,7 +40,12 @@ function CommentItem({ comment, mentionMembers, mentionUsersById, onSave, onDele
 
   return (
     <li className="flex gap-2">
-      <Avatar user={comment.author} />
+      {/* 아바타는 본문과 다른 열에 있어(li가 2단 flex) 이름과 한 덩어리로 묶으면
+          레이아웃이 무너진다. 그래서 같은 사람에 팝오버를 따로 하나 더 건다 —
+          아바타 위에서도 이메일이 뜨게 하려면 이 방법이 가장 덜 건드린다. */}
+      <EmailPopover user={comment.author}>
+        <Avatar user={comment.author} />
+      </EmailPopover>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <EmailPopover user={comment.author}>

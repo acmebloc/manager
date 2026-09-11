@@ -199,7 +199,11 @@ function ProjectDetailPage() {
   }
 
   const openMembers = () => {
-    setDraftMembers(savedMembers)
+    // **이미 바꿔둔 게 있으면 그대로 둔다.** 수정 모드에서는 닫기가 취소가 아니라
+    // 접기일 뿐인데, 다시 펼 때 저장되지 않은 상태로 되돌리면 접었다 편 것만으로
+    // 변경이 날아간다(실측으로 걸렸다). 조회 모드에서는 닫을 때 이미 되돌리므로
+    // 그때는 diff가 0이라 이 조건이 걸리지 않는다.
+    if (diff.count === 0) setDraftMembers(savedMembers)
     setMemberError('')
     setMembersOpen(true)
   }
@@ -209,7 +213,18 @@ function ProjectDetailPage() {
     setMemberError('')
   }
 
+  // **수정 모드에서는 닫아도 멤버 변경을 버리지 않는다**(사용자 결정). 그 모드의
+  // 최종 저장은 위쪽 [저장] 하나이므로, 접는 건 화면을 줄이는 동작일 뿐 취소가
+  // 아니다 — 접었다고 바꾼 게 날아가면 다시 펴서 처음부터 해야 한다. 되돌리려면
+  // 위쪽 [취소]를 누르면 된다.
+  //
+  // 조회 모드에서는 멤버 블록이 자기 저장 버튼으로 스스로 저장하므로, 닫기는
+  // 예전처럼 되돌리기다(저장 안 한 변경이 있으면 확인부터 받는다).
   const closeMembers = () => {
+    if (editing) {
+      setMembersOpen(false)
+      return
+    }
     if (diff.count > 0 && !window.confirm('저장하지 않은 멤버 변경이 있습니다. 닫을까요?')) return
     setDraftMembers(savedMembers)
     setMemberError('')
@@ -429,7 +444,7 @@ function ProjectDetailPage() {
 
       <div className="mt-6 flex flex-col gap-4">
         <div className="relative flex flex-col gap-4 border-t border-gray-100 pt-6 dark:border-gray-700">
-          {isPmOrPl && !editing && (
+          {isPmOrPl && (
             <button
               type="button"
               onClick={membersOpen ? closeMembers : openMembers}
