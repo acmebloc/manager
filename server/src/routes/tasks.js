@@ -336,6 +336,41 @@ async function applyTaskFollowers(projectId, taskId, followerIds) {
   await prisma.$transaction(operations)
 }
 
+// **등급이 긴급이 되면 그 프로젝트의 PM을 참조자로 자동 추가한다.**
+// 긴급은 PM이 알아야 하는 등급인데, 지금은 누가 알려주지 않으면 모른 채
+// 지나간다. 참조자가 되면 그 일감의 검수 전이 알림을 함께 받는다
+// (notifyReviewTransition).
+//
+// 규칙 세 가지:
+//   - **추가만 한다.** 등급이 도로 내려가도 빼지 않는다 — 한 번 긴급이었던
+//     일감은 PM이 끝까지 지켜보는 게 맞고, 자동으로 빠지면 "왜 알림이
+//     끊겼지"가 된다. 필요하면 화면에서 직접 뺄 수 있다.
+//   - **등록 시 긴급이어도 똑같이 적용한다.** "긴급으로 바뀌면"과 "긴급으로
+//     만들면"을 다르게 취급할 이유가 없다.
+//   - **이미 참조자면 그냥 둔다**(skipDuplicates). 그래서 여러 번 저장해도
+//     같은 결과다.
+//
+// 반드시 applyTaskFollowers **뒤에** 불러야 한다 — 그쪽은 목록을 통째로
+// 교체하므로(deleteMany + createMany), 먼저 넣으면 같은 요청에서 지워진다.
+async function autoFollowPmOnUrgent(projectId, taskId, { previousGrade, nextGrade }) {
+  if (nextGrade !== 'urgent' || previousGrade === 'urgent') return
+  try {
+    const pms = await prisma.projectMember.findMany({
+      where: { projectId, role: 'pm' },
+      select: { userId: true },
+    })
+    if (pms.length === 0) return
+    await prisma.taskFollower.createMany({
+      data: pms.map((m) => ({ taskId, userId: m.userId })),
+      skipDuplicates: true,
+    })
+  } catch (err) {
+    // 참조자 추가가 실패해도 저장 자체는 이미 끝났다 — 여기서 던지면 사용자는
+    // 저장이 실패한 줄 안다. 담당자 알림(notifyPeopleChanges)과 같은 취급.
+    console.error('[task] autoFollowPmOnUrgent failed', { taskId, error: err.message })
+  }
+}
+
 // 미완료 선행 일감 수만 다시 센다 — 선행 링크 갱신(applyTaskLinks)이 task
 // 조회보다 나중에 일어나므로, 저장 응답에 실려온 blockedByOpenCount는 갱신 전
 // 값이다(참조자와 같은 이유). 링크를 건드린 요청에서만 부른다.
@@ -805,6 +840,8 @@ router.post('/', requireProjectRole('member'), async (req, res) => {
   // 성립하지 않는다 — 그래서 여기서는 순환 검사를 하지 않는다(PATCH에만 있다).
   await applyTaskLinks(req.params.projectId, task.id, { relatedTaskIds, blockedByTaskIds })
   await applyTaskFollowers(req.params.projectId, task.id, followerIds)
+  // 등록 시점부터 긴급이면 previousGrade가 없는 셈이라 null로 넘긴다.
+  await autoFollowPmOnUrgent(req.params.projectId, task.id, { previousGrade: null, nextGrade: task.grade })
   await prisma.taskActivity.create({ data: { taskId: task.id, actorId: req.user.id, action: 'created' } })
   notifyPeopleChanges(task, req.user, { assigneeId: null, reviewerId: null })
   const memberIds = await currentMemberIds(req.params.projectId)
@@ -1017,6 +1054,10 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
 
   await applyTaskLinks(req.params.projectId, task.id, { relatedTaskIds, blockedByTaskIds })
   await applyTaskFollowers(req.params.projectId, task.id, followerIds)
+  await autoFollowPmOnUrgent(req.params.projectId, task.id, {
+    previousGrade: existing.grade,
+    nextGrade: task.grade,
+  })
   if (activityChanges.length > 0) {
     await prisma.taskActivity.createMany({
       data: activityChanges.map((c) => ({ taskId: task.id, actorId: req.user.id, action: 'field_changed', ...c })),

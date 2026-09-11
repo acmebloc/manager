@@ -1,10 +1,11 @@
 import { prisma } from '../db.js'
 import { decryptUser } from './fieldCrypto.js'
-import { notifyDueSoon } from './mailer.js'
+import { notifyDueSoon, notifyOverdue } from './mailer.js'
 import { createNotification } from './notifications.js'
 import { wantsEmailNotifications } from './notificationPrefs.js'
 
-// 고정 상수 — 마감 D-3부터 D-day까지 매일, 하루 1회 한국시간 오전 10시 스캔.
+// 고정 상수 — 마감 D-3부터 D-day까지 매일, 마감이 지난 뒤에는 D+1/D+3/D+7과
+// 그 뒤 주 1회(shouldRemindOverdue). 하루 1회 한국시간 오전 10시 스캔.
 // 설정 UI/환경변수는 두지 않는다.
 const REMINDER_MAX_DAYS_BEFORE = 3
 const SCAN_HOUR_KST = 10
@@ -40,21 +41,39 @@ function reminderRecipient(task) {
   return { userId: task.assigneeId, user: task.assignee }
 }
 
-// endAt이 "오늘부터 +3일"(D-3~D-day) 사이에 들어오고, 완료되지 않았고 받을 사람이
-// 있는 일감을 매일 훑는다. `dueReminderLastDaysLeft`에 "마지막으로 보낸 날의
-// 남은 일수"를 저장해두고, 오늘 계산한 남은 일수와 다르면(=오늘 치를 아직 안
-// 보냈으면) 보낸다 — 그래서 D-3/D-2/D-1/D-day에 각각 한 번씩, 한 일감당 최대
-// 4번 보낸다. 같은 날 스캔이 두 번 돌아도(재시작 등) 값이 같으므로 중복 발송은
-// 안 된다. endAt이 바뀌면(tasks.js) 이 값이 null로 리셋돼 새 마감일 기준으로
-// 사이클이 처음부터 다시 돈다.
+// 마감이 지난 뒤에는 **D+1, D+3, D+7에 보내고 그 뒤로는 주 1회**다(사용자 결정).
+//
+// 매일 보내면 오래 밀린 일감이 메일함을 잠기게 하고, 그러면 곧 통째로 무시당해
+// 알림 자체가 무의미해진다. 반대로 한 번만 보내면 그 메일을 놓쳤을 때 다시
+// 알릴 방법이 없다. 초반에 촘촘하고 뒤로 갈수록 성기게 두는 이유다.
+function shouldRemindOverdue(daysPast) {
+  if (daysPast === 1 || daysPast === 3) return true
+  return daysPast >= 7 && daysPast % 7 === 0
+}
+
+// 마감이 D+3 이내로 다가왔거나 **이미 지난** 일감 중, 완료되지 않았고 받을
+// 사람이 있는 것을 매일 훑는다.
+//
+// 중복 발송은 `dueReminderLastDaysLeft` 하나로 막는다 — "마지막으로 보낸 날의
+// 남은 일수"를 넣어두고 오늘 계산한 값과 다를 때만 보낸다. 마감이 지난 뒤에는
+// 이 값이 **음수**(D+3이면 -3)라 같은 비교가 그대로 통한다. 그래서 컬럼을 새로
+// 만들지 않았다. 같은 날 스캔이 두 번 돌아도(재시작 등) 값이 같아 다시 보내지
+// 않고, endAt이 바뀌면(tasks.js) null로 리셋돼 새 마감일 기준으로 다시 돈다.
+//
+// 보내는 시점: 마감 전 D-3/D-2/D-1/D-day 각 1회, 마감 후 D+1/D+3/D+7과 그 뒤
+// 주 1회. 마감 전에는 공을 들고 있는 사람만, 마감 후에는 PM도 함께 받는다.
 export async function runDueReminderScan(now = new Date()) {
   const todayIndex = kstDayIndex(now)
-  const rangeStart = kstDayStart(todayIndex)
   const rangeEnd = new Date(kstDayStart(todayIndex + REMINDER_MAX_DAYS_BEFORE).getTime() + DAY_MS - 1)
 
   const tasks = await prisma.task.findMany({
     where: {
-      endAt: { gte: rangeStart, lte: rangeEnd },
+      // 아래 경계(rangeEnd = D+3의 끝)까지만 본다 — 그보다 먼 미래는 아직 알릴
+      // 때가 아니다. **과거 쪽은 열어둔다**: 마감이 지난 일감도 알려야 하기
+      // 때문이다(shouldRemindOverdue가 보낼 날인지 가린다). 완료됐거나 받을
+      // 사람이 없거나 보관된 프로젝트는 아래 조건에서 빠지므로, 오래된 행이
+      // 무한정 쌓여 스캔이 무거워지지는 않는다.
+      endAt: { not: null, lte: rangeEnd },
       status: { not: 'done' },
       // 아래 reminderRecipient가 받을 사람을 찾아내는 경우와 정확히 같은
       // 집합이다 — 담당자가 있거나, 검수중이면서 검수자가 있는 일감. 조건을
@@ -80,31 +99,61 @@ export async function runDueReminderScan(now = new Date()) {
     },
   })
 
+  // 마감이 지난 알림은 PM도 함께 받는다(사용자 결정). 일감마다 조회하지 않고
+  // 이번 스캔에 걸린 프로젝트의 PM을 한 번에 읽어 프로젝트별로 묶어둔다.
+  const pmsByProject = new Map()
+  const overdueProjectIds = [
+    ...new Set(tasks.filter((t) => kstDayIndex(t.endAt) - todayIndex < 0).map((t) => t.projectId)),
+  ]
+  if (overdueProjectIds.length > 0) {
+    const rows = await prisma.projectMember.findMany({
+      where: { projectId: { in: overdueProjectIds }, role: 'pm' },
+      select: { projectId: true, userId: true, user: { select: personSelect } },
+    })
+    for (const row of rows) {
+      if (!pmsByProject.has(row.projectId)) pmsByProject.set(row.projectId, [])
+      pmsByProject.get(row.projectId).push({ userId: row.userId, user: row.user })
+    }
+  }
+
   for (const task of tasks) {
     const daysLeft = kstDayIndex(task.endAt) - todayIndex
     if (daysLeft === task.dueReminderLastDaysLeft) continue
-    const { userId, user } = reminderRecipient(task)
+    const overdue = daysLeft < 0
+    if (overdue && !shouldRemindOverdue(-daysLeft)) continue
+    const holder = reminderRecipient(task)
     // 위 where와 이 함수가 같은 집합을 보므로 여기서 걸릴 일은 없지만, 둘이
     // 어긋나면 decryptUser(null)로 스캔 전체가 죽으니 방어는 남겨둔다.
-    if (!userId) continue
+    if (!holder.userId) continue
+
+    // 마감 전에는 공을 들고 있는 사람에게만 간다(기존 동작). 마감이 지난 뒤에만
+    // PM이 더해진다 — PM이 곧 담당자·검수자면 두 번 보내지 않는다.
+    const recipients = [holder]
+    if (overdue) {
+      for (const pm of pmsByProject.get(task.projectId) || []) {
+        if (!recipients.some((r) => r.userId === pm.userId)) recipients.push(pm)
+      }
+    }
+
     try {
       const link = `/tasks/${task.projectId}/${task.id}`
-      const message = `"${task.project.name}", "${task.title}" 일감이 마감일까지 ${daysLeft}일 남았어요. 꼭 확인 부탁드려요.`
-      await createNotification({
-        userId,
-        type: 'task_due_soon',
-        title: message,
-        link,
-      })
-      if (await wantsEmailNotifications(userId)) {
-        await notifyDueSoon({
-          to: decryptUser(user).email,
-          projectName: task.project.name,
-          taskTitle: task.title,
+      const message = overdue
+        ? `"${task.project.name}", "${task.title}" 일감이 마감일에서 ${-daysLeft}일 지났어요. 확인 부탁드려요.`
+        : `"${task.project.name}", "${task.title}" 일감이 마감일까지 ${daysLeft}일 남았어요. 꼭 확인 부탁드려요.`
+
+      for (const { userId, user } of recipients) {
+        await createNotification({
+          userId,
+          type: overdue ? 'task_overdue' : 'task_due_soon',
+          title: message,
           link,
-          daysLeft,
         })
+        if (!(await wantsEmailNotifications(userId))) continue
+        const mail = { to: decryptUser(user).email, projectName: task.project.name, taskTitle: task.title, link }
+        if (overdue) await notifyOverdue({ ...mail, daysPast: -daysLeft })
+        else await notifyDueSoon({ ...mail, daysLeft })
       }
+
       await prisma.task.update({ where: { id: task.id }, data: { dueReminderLastDaysLeft: daysLeft } })
     } catch (err) {
       console.error('[dueReminderJob] failed for task', { taskId: task.id, error: err.message })

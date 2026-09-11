@@ -117,3 +117,15 @@ export function notifyDueSoon({ to, projectName, taskTitle, link, daysLeft }) {
     linkLabel: '일감 바로가기',
   })
 }
+
+// 마감이 지난 뒤의 알림. 같은 스캔이 보내지만 문구를 나눈다 — "-3일 남았어요"로
+// 읽히면 무슨 뜻인지 한 번 더 생각해야 한다.
+export function notifyOverdue({ to, projectName, taskTitle, link, daysPast }) {
+  return notify({
+    to,
+    subject: `[Manager] "${taskTitle}" 마감일이 ${daysPast}일 지났습니다`,
+    heading: `"${projectName}", "${taskTitle}" 일감이 마감일에서 ${daysPast}일 지났어요. 확인 부탁드려요.`,
+    link,
+    linkLabel: '일감 바로가기',
+  })
+}
