@@ -1157,7 +1157,13 @@ Manager가 좁은 화면에서 메뉴를 서랍에 넣도록 바뀌었다([Layou
 체크박스를 라벨(햄버거)로 토글하고 `:checked ~` 로 서랍과 덮개를 연다. 페이지를
 이동하면 문서가 새로 로드되므로 서랍은 저절로 닫힌 상태로 시작한다.
 
-**1뎁스에는 햄버거만 둔다 — 검색도 프로필도, 브랜드 글자도 없다.** 2뎁스(BookStack 원본 헤더)에 이미 둘 다
+**게시판 하위메뉴(공간·문서함)도 같은 서랍에 넣는다**(사용자 결정). 2뎁스를 따로
+두면 좁은 화면에서 또 한 줄을 차지하는데, 실제로 V10에서는 그 줄이 깨져 글자가
+세로로 쪼개졌다. 설정·즐겨찾기·프로필 보기는 **BookStack의 ⋮ 토글에 그대로 둔다** —
+계정·관리 성격이라 이동 메뉴와 뜻이 다르고, 설정은 관리자에게만 렌더링되는
+조건부라 우리가 복제하면 권한 판정까지 따라 베껴야 한다.
+
+**1뎁스 바에는 햄버거만 둔다 — 검색도 프로필도, 브랜드 글자도 없다.** 2뎁스(BookStack 원본 헤더)에 이미 둘 다
 있어서, 넣으면 한 화면에 검색창이 둘, 프로필이 둘이 된다. 특히 프로필은 **생김새만
 비슷하고 기능이 다르다** — Manager 쪽은 누를 수 없는 표시 전용이고, BookStack 쪽은
 눌러서 여는 드롭다운이다. 기능이 있는 쪽만 남긴다. 데스크톱도 원래 그렇게 되어 있어
@@ -1179,7 +1185,7 @@ path = sys.argv[1]
 with open(path) as f:
     content = f.read()
 
-if "MANAGER-NAV-V10" in content:
+if "MANAGER-NAV-V11" in content:
     print("already patched, skipping")
     raise SystemExit(0)
 
@@ -1187,7 +1193,7 @@ m = re.search(r'<!-- MANAGER-NAV(-V\d+)? -->.*?</style>\n', content, re.S)
 if not m:
     raise SystemExit("old MANAGER-NAV block not found — aborting")
 
-snippet = """<!-- MANAGER-NAV-V10 -->
+snippet = """<!-- MANAGER-NAV-V11 -->
 <input type="checkbox" id="acmebloc-nav-toggle" class="acmebloc-nav-toggle" aria-label="메뉴 열기">
 <div class="acmebloc-mobilebar">
     <label for="acmebloc-nav-toggle" class="acmebloc-burger"><span></span><span></span><span></span></label>
@@ -1200,6 +1206,9 @@ snippet = """<!-- MANAGER-NAV-V10 -->
     <a href="/schedule">일정</a>
     <a href="/board" class="active">게시판</a>
     <a href="/mypage">마이페이지</a>
+    <span class="acmebloc-navgroup">게시판 메뉴</span>
+    <a href="/board/shelves" class="acmebloc-subitem">공간</a>
+    <a href="/board/books" class="acmebloc-subitem">문서함</a>
 </nav>
 <style>
 .acmebloc-nav-toggle { position: absolute; width: 1px; height: 1px; opacity: 0; }
@@ -1231,6 +1240,27 @@ snippet = """<!-- MANAGER-NAV-V10 -->
   .acmebloc-nav-toggle:checked ~ .acmebloc-topnav { transform: none; visibility: visible; }
   .acmebloc-nav-toggle:checked ~ .acmebloc-nav-backdrop { opacity: 1; pointer-events: auto; }
 
+  /* 서랍 안의 게시판 하위메뉴 */
+  .acmebloc-navgroup { margin: 0.5rem 1rem 0.25rem; padding-top: 0.5rem; border-top: 1px solid #e5e7eb; font-size: 0.75rem; color: #9ca3af; }
+  .acmebloc-topnav a.acmebloc-subitem { padding-left: 2rem; color: #4f46e5; }
+
+  /* 공간·문서함은 서랍으로 옮겼으니 2뎁스에서는 숨긴다. 12번에서 넣은
+     margin-left:210px이 좁은 화면에서 두 링크를 오른쪽 끝으로 밀어 글자가 세로로
+     쪼개졌다(실측). **그 줄 자체는 숨기지 않는다** — 같은 줄 안에 BookStack의
+     ⋮ 토글이 있고 그 안에 설정·즐겨찾기·프로필 보기가 들어 있다. */
+  .acmebloc-header-shelves { display: none !important; }
+
+  /* **그리드를 끈다.** #header는 class="... grid"라 자식들이 한 줄에 칸을 나눠
+     갖는데, 좁은 화면에서는 그 칸이 너무 좁아 링크 글자가 세로로 쪼개진다
+     (V10에서 실제로 그렇게 나왔다). block으로 바꿔 자식들을 세로로 쌓는다. */
+  header#header { display: block !important; }
+
+  /* 문서 검색을 좁은 화면에서도 보여준다. **hide-under-l은 .search-box가 아니라
+     그 바깥 DIV에 붙어 있다**(실측: #header의 두 번째 자식
+     DIV.flex-container-column...hide-under-l). V10에서 .search-box.hide-under-l로
+     잡는 바람에 선택자가 빗나가 검색이 끝내 안 떴다. */
+  header#header > .hide-under-l { display: block !important; width: 100%; margin-top: 0.5rem; }
+  header#header > .hide-under-l .search-box { width: 100%; }
 }
 
 /* BookStack 원본 헤더는 그대로 두고 톤만 Manager에 맞춘다 (구조/DOM은 안 건드림) */
@@ -1265,21 +1295,6 @@ header#header, header#header * {
 }
 #header-search-box-button { color: #6b7280 !important; }
 .dropdown-container .user-name { color: #4f46e5 !important; }
-
-/* 2뎁스(BookStack 원본)의 검색을 좁은 화면에서도 보여준다 — 원본은 hide-under-l로
-   숨기는데, 게시판에서 문서 검색은 자주 쓰므로 되살린다. 한 줄을 통째로 쓰게 해서
-   데스크톱용 그리드 칸에 끼어 찌그러지지 않게 한다.
-   **기준이 1000px인 이유**: hide-under-l의 l이 BookStack에서 1000px이다
-   (resources/sass/_vars.scss의 $bp-l). 우리 서랍 기준(768px)에 맞추면
-   768~1000px 구간에서는 원본이 계속 숨겨 검색이 사라진다.
-   우리 규칙은 id+클래스 2개라 원본(.hide-under-l)보다 우선순위가 높다. */
-@media (max-width: 1000px) {
-  header#header .search-box.hide-under-l {
-    display: block !important;
-    grid-column: 1 / -1 !important;
-    margin: 0.5rem 0 !important;
-  }
-}
 </style>
 """
 
