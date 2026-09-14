@@ -1185,7 +1185,7 @@ path = sys.argv[1]
 with open(path) as f:
     content = f.read()
 
-if "MANAGER-NAV-V18" in content:
+if "MANAGER-NAV-V19" in content:
     print("already patched, skipping")
     raise SystemExit(0)
 
@@ -1193,7 +1193,7 @@ m = re.search(r'<!-- MANAGER-NAV(-V\d+)? -->.*?</style>\n', content, re.S)
 if not m:
     raise SystemExit("old MANAGER-NAV block not found — aborting")
 
-snippet = """<!-- MANAGER-NAV-V18 -->
+snippet = """<!-- MANAGER-NAV-V19 -->
 <input type="checkbox" id="acmebloc-nav-toggle" class="acmebloc-nav-toggle" aria-label="메뉴 열기">
 <div class="acmebloc-mobilebar">
     <label for="acmebloc-nav-toggle" class="acmebloc-burger"><span></span><span></span><span></span></label>
@@ -1309,54 +1309,82 @@ snippet = """<!-- MANAGER-NAV-V18 -->
 
 /* 768~1000px을 1001px 이상과 **같은 모습**으로 되돌린다(사용자 결정).
    왜 필요한가: BookStack은 자기 기준 $bp-l(=1000px) 아래에서 헤더를 모바일 모양으로
-   바꾼다(resources/sass/_header.scss). 검색창과 계정 버튼(hide-under-l)을 숨기고,
-   설정·계정 메뉴를 nav.header-links라는 떠 있는 카드로 접고, ⋮(hide-over-l)를
-   내놓는다. 우리 기준은 767px이라 768~1000이 어긋나는 구간으로 남는다.
-   미디어쿼리 없이는 되돌릴 수 없다 — 접는 쪽이 조건부 CSS이기 때문이다. */
+   바꾼다(resources/sass/_header.scss). 우리 기준은 767px이라 768~1000이 어긋나는
+   구간으로 남는다. 접는 쪽이 조건부 CSS라 미디어쿼리 없이는 되돌릴 수 없다.
+   아래 규칙은 _header.scss의 smaller-than($bp-l) 블록과 hide-under-l 유틸리티를
+   **한 줄씩 대응시켜** 원본 데스크톱 값으로 되돌린 것이다. 값은 짐작이 아니라
+   BookStack 소스에서 그대로 옮겼다(_header.scss / _lists.scss / _text.scss).
+   결과적으로 헤더의 분기는 셋뿐이다 — 767 이하(모바일), 768~1100(아래 블록 +
+   BookStack 자신의 1001~1100 규칙), 1100 초과(BookStack 기본). */
 @media (min-width: 768px) and (max-width: 1000px) {
-  /* 표시/숨김 헬퍼를 1001px 이상 기준으로 뒤집는다 */
-  header#header .hide-under-l { display: revert !important; }
+  /* ① 가장 중요한 한 줄. #header에는 class="... grid"가 붙어 있고, BookStack이
+     1000px 이하에서 이 3칸 그리드를 1칸으로 접는다(_header.scss 12-17행).
+     그래서 [공간·문서함] [검색] [설정·프로필] 세 자식이 세로로 쌓였다.
+     V18이 이 줄 하나를 빠뜨려서, 나머지를 다 되돌려도 화면이 무너져 보였다. */
+  header#header.grid {
+    grid-template-columns: minmax(max-content, 2fr) 1fr minmax(max-content, 2fr) !important;
+  }
+
+  /* ② 표시/숨김 헬퍼를 1001px 이상 기준으로 뒤집는다. hide-under-l은
+     `display: none !important`(_layout.scss 299-310행)라 되돌리려면 값을 직접 줘야
+     하는데, 이 클래스가 붙은 두 요소의 원래 display가 서로 다르다 — 검색 칸은
+     flex 컨테이너(div.flex-container-column), 계정 버튼은 inline-flex(button.user-name).
+     V18은 둘 다 `revert`로 퉁쳤는데, revert는 같은 origin의 앞 규칙이 아니라
+     **브라우저 기본값**으로 되돌리는 키워드다. 그래서 검색 칸이 block이 되어
+     가운데 정렬이 풀렸다. 요소별로 지정한다. */
+  header#header > .hide-under-l { display: flex !important; }
+  header#header .user-name.hide-under-l { display: inline-flex !important; }
   header#header .hide-over-l { display: none !important; }
 
-  /* 카드로 접힌 헤더 링크를 가로 배치로 되돌린다 */
+  /* ③ 카드로 접힌 헤더 링크를 가로 배치로 (_header.scss 222-278행의 반대) */
   header#header nav.header-links {
-    display: flex !important; align-items: center; gap: 0.75rem;
-    position: static !important; background: transparent !important;
-    box-shadow: none !important; border-radius: 0 !important;
-    margin-top: 0 !important; padding: 0 !important; overflow: visible !important;
-    inset-inline-end: auto !important;
+    display: flex !important; align-items: center; justify-content: end;
+    position: static !important; z-index: auto;
+    background-color: transparent !important; box-shadow: none !important;
+    border-radius: 0 !important; overflow: visible !important;
+    margin-top: 0 !important; padding: 0 !important; inset-inline-end: auto !important;
   }
-  header#header nav.header-links .links { display: flex !important; align-items: center; gap: 0.75rem; }
-  header#header nav.header-links .links a {
-    display: inline-flex !important; grid-template-columns: none !important;
-    padding: 0 !important; gap: 0.375rem !important;
+  header#header .links { display: inline-block !important; vertical-align: top; }
+  header#header .links a {
+    display: inline-block !important; padding: 10px 16px !important;
+    border-radius: 3px; gap: normal;
   }
-  header#header .dropdown-container { display: inline-block !important; padding-inline-start: revert !important; }
+  header#header .links a svg { width: 1em !important; margin-inline-end: 6px !important; }
+  header#header .dropdown-container {
+    display: inline-block !important; vertical-align: top; position: relative;
+    padding-inline-start: 16px !important; padding-inline-end: 0 !important;
+  }
 
-  /* 계정 메뉴를 다시 '눌러서 여는 드롭다운'으로. 모바일 규칙은 이 ul을
-     display:block !important로 **항상 펼쳐두므로** 그걸 이겨야 한다.
-     다만 여는 동작은 JS가 인라인 style.display로 하는데(components/dropdown.js),
-     인라인 스타일은 !important를 이기지 못한다. 그래서 열릴 때 함께 붙는
-     .menuIn 클래스를 걸쇠로 쓴다(닫을 때 제거된다). */
-  /* 카드 모양은 **우리 값으로 직접 준다.** revert로 되돌리려 했더니 BookStack의
-     데스크톱 스타일까지 같이 지워져 항목이 세로로 쪼개진 채 나왔다(실측). 그
-     스타일이 헤더 밖 여러 파일에 흩어져 있어 그대로 복원하기도 어렵다. 어차피
-     10·11번에서 쓰는 톤과 같은 색이라 여기서 정의하는 편이 예측 가능하다. */
+  /* ④ 계정 메뉴를 다시 '눌러서 여는 드롭다운'으로. 모바일 규칙이 이 ul을
+     `display: block !important`로 **항상 펼쳐두므로** 그걸 이겨야 한다. 다만 여는
+     동작은 JS가 인라인 style.display로 하는데(components/dropdown.js), 인라인
+     스타일은 !important를 이기지 못한다. 그래서 열릴 때 함께 붙는 .menuIn 클래스를
+     걸쇠로 쓴다(닫을 때 제거된다).
+     카드 값은 BookStack 데스크톱 원본 .dropdown-menu 그대로다(_lists.scss 675행).
+     V18에서 `revert`로 되돌리려다 데스크톱 스타일까지 지워져 항목이 글자 단위로
+     쪼개졌던 자리 — 이번엔 원본 값을 직접 적어 그 실패를 되풀이하지 않는다. */
   header#header .dropdown-container ul {
     display: none !important; position: absolute !important;
-    inset-inline-end: 0; min-width: 11rem; margin-top: 0.25rem; padding: 0.25rem 0;
-    background: #fff; border: 1px solid #e5e7eb; border-radius: 0.375rem;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    z-index: 999; top: 0; inset-inline-end: 0;
+    margin: 16px 0 !important; padding: 6px 0 !important;
+    min-width: 180px; max-height: 500px; overflow-y: auto;
+    list-style: none; text-align: start !important;
+    background-color: #fff !important; color: #555;
+    border-radius: 3px; box-shadow: 0 1px 6px 0 rgba(0, 0, 0, 0.18) !important;
   }
   header#header .dropdown-container ul.menuIn { display: block !important; }
-  /* 항목은 한 줄짜리 링크로. BookStack 모바일 규칙이 grid(16px+auto)로 잡아두는데,
-     카드 폭에 따라 글자 칸이 눌려 **글자 단위로 줄바꿈되는** 일이 있었다(실측).
-     nowrap으로 그 가능성 자체를 없앤다. */
-  header#header .dropdown-container ul li a {
-    display: flex !important; align-items: center; gap: 0.5rem;
-    padding: 0.5rem 0.75rem !important; white-space: nowrap;
-    grid-template-columns: none !important;
-  }
+  /* 항목은 모바일 규칙과 데스크톱(.icon-item)이 거의 같다 — 다른 건 세로 정렬과
+     아이콘 여백 둘뿐이라 그 둘만 맞춘다. */
+  header#header .dropdown-container ul li a,
+  header#header .dropdown-container ul li button { align-items: start; }
+  header#header .dropdown-container ul li svg { margin-inline-end: 0 !important; }
+
+  /* ⑤ 1001~1100px과 **똑같이** 보이려면 그 구간 전용 규칙도 같이 적용해야 한다
+     (_header.scss 82-87행·116-118행의 between($bp-l, $bp-xl)). 이름을 감추고
+     검색창을 200px로 묶는 규칙인데, 빠뜨리면 768~1000만 이름이 보여서 또 어긋난다. */
+  header#header .user-name { padding-inline-start: 6px; }
+  header#header .user-name .name { display: none; }
+  header#header .search-box { max-width: 200px; }
 }
 
 /* 2뎁스의 ⋮ 자리를 Manager 헤더의 프로필과 같은 모양으로 — 아바타 + 이름(4자).
@@ -1442,16 +1470,29 @@ sudo -u bookstack bash -c "cd $BS && php artisan view:clear"
 > **11번의 톤 통일 CSS가 위 스니펫에 그대로 들어 있다.** 이 패치는 V9 블록을 통째로
 > 교체하므로, 톤 CSS를 같이 싣지 않으면 게시판 색·폰트가 원래대로 돌아간다. 위
 > `<style>`의 뒷부분(`header#header` 이하)이 바로 그 부분이니 **잘라내지 말 것.**
-> 마커를 V10으로 올렸으므로 재실행하면 V9 블록을 찾아 교체한다.
+> 마커는 내용이 바뀔 때마다 올린다(현재 V19). 정규식이 버전 무관하게
+> `<!-- MANAGER-NAV -->` ~ `</style>`를 잡으므로, 재실행하면 직전 버전 블록을 찾아
+> 통째로 교체한다.
 
 ### 적용 후 확인
 
-1. 휴대폰 폭(390px)에서 1뎁스가 햄버거 한 줄인지, 누르면 왼쪽에서 메뉴 6개가 나오는지.
-2. 서랍 바깥(덮개)을 누르면 닫히는지.
-3. 2뎁스에 **문서 검색창이 보이는지** — 이 부분이 가장 불확실하다. BookStack 헤더는
-   CSS 그리드인데 검색창이 데스크톱용 칸에 끼어들어 배치가 어그러질 수 있다.
-   어그러지면 `header#header .search-box` 의 `grid-column` 값을 화면 보고 조정한다.
-4. 데스크톱(1280px)에서 1뎁스·2뎁스가 **예전과 똑같은지**(회귀).
+헤더의 분기는 셋뿐이어야 한다 — **767 이하 / 768~1100 / 1100 초과.**
+
+1. 휴대폰 폭(390px)에서 1뎁스가 햄버거 한 줄인지, 누르면 왼쪽에서 메뉴 6개 + 게시판
+   하위메뉴가 나오는지. 서랍 바깥(덮개)과 X를 누르면 닫히는지.
+2. 2뎁스가 `[공간·문서함] [검색창] [설정·아바타]` **한 줄**인지, 검색창이 화면 폭을
+   따라 줄되 250px을 넘지 않는지.
+3. **768 · 900 · 1000 · 1100을 차례로 재보고 네 폭이 똑같은지.** 여기가 이 패치의
+   핵심이다. 하나라도 세로로 쌓이면 `header#header.grid`의
+   `grid-template-columns` 복원이 안 먹은 것이다(BookStack이 1000px 이하에서 이
+   3칸 그리드를 1칸으로 접는다).
+4. 그 구간에서 **아바타를 눌러 계정 메뉴가 카드로 열리는지**, 항목이 한 줄씩
+   나오는지. 안 열리면 `dropdown.js`가 붙이는 클래스 이름이 바뀐 것이므로
+   `.menuIn` 걸쇠를 실제 클래스로 갱신한다.
+5. 1101px 이상은 BookStack 기본값 그대로다 — 이 폭부터 아바타 옆에 이름이 다시
+   보이는 건 정상이다(BookStack 자신의 `between($bp-l, $bp-xl)` 규칙).
+6. 헤더 **아래쪽 본문**은 여전히 BookStack 기준 1000px에서 접힌다(좌우 사이드바가
+   탭으로 바뀜). 의도한 것이다 — 이 패치는 헤더만 다룬다.
 
 ## 업그레이드 후 점검
 
