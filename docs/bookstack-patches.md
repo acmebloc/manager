@@ -1185,7 +1185,7 @@ path = sys.argv[1]
 with open(path) as f:
     content = f.read()
 
-if "MANAGER-NAV-V16" in content:
+if "MANAGER-NAV-V17" in content:
     print("already patched, skipping")
     raise SystemExit(0)
 
@@ -1193,7 +1193,7 @@ m = re.search(r'<!-- MANAGER-NAV(-V\d+)? -->.*?</style>\n', content, re.S)
 if not m:
     raise SystemExit("old MANAGER-NAV block not found — aborting")
 
-snippet = """<!-- MANAGER-NAV-V16 -->
+snippet = """<!-- MANAGER-NAV-V17 -->
 <input type="checkbox" id="acmebloc-nav-toggle" class="acmebloc-nav-toggle" aria-label="메뉴 열기">
 <div class="acmebloc-mobilebar">
     <label for="acmebloc-nav-toggle" class="acmebloc-burger"><span></span><span></span><span></span></label>
@@ -1307,6 +1307,26 @@ snippet = """<!-- MANAGER-NAV-V16 -->
   }
 }
 
+/* 2뎁스의 ⋮ 자리를 Manager 헤더의 프로필과 같은 모양으로 — 아바타 + 이름(4자).
+   버튼 자체는 BookStack 것이라 누르면 원래 레이어가 그대로 열린다.
+   **미디어쿼리 밖에 둔다.** 이 버튼(hide-over-l 래퍼)과 레이어의 검색 링크는
+   BookStack이 이미 1000px 이상에서 숨기므로, 기본 CSS에 둬도 넓은 화면은 전혀
+   달라지지 않는다. 덕분에 미디어쿼리를 하나(767px)로 유지할 수 있다. */
+header#header .mobile-menu-toggle {
+  display: inline-flex !important; align-items: center; gap: 0.375rem;
+  padding: 0.25rem 0.5rem; border-radius: 0.375rem;
+}
+header#header .mobile-menu-toggle .avatar {
+  width: 28px; height: 28px; border-radius: 9999px; object-fit: cover;
+}
+header#header .acmebloc-mobile-username {
+  font-size: 0.875rem; font-weight: 500; color: #4f46e5;
+  max-width: 6rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 레이어의 '검색' 항목은 뺀다(사용자 결정) — 검색창을 따로 노출하므로 중복이다.
+   원본에서 이 링크가 a.hide-over-l이다(layouts/parts/header-links.blade.php). */
+header#header nav.header-links a.hide-over-l { display: none !important; }
+
 /* BookStack 원본 헤더는 그대로 두고 톤만 Manager에 맞춘다 (구조/DOM은 안 건드림) */
 header#header {
   background: #f9fafb !important;
@@ -1339,33 +1359,6 @@ header#header, header#header * {
 }
 #header-search-box-button { color: #6b7280 !important; }
 .dropdown-container .user-name { color: #4f46e5 !important; }
-/* 768~1000px — 1뎁스는 가로 메뉴 그대로지만, BookStack이 hide-under-l(=1000px
-   미만)로 자기 검색을 숨겨 이 구간에는 검색창이 아예 없었다. 되살린다. 배치는
-   원본 그리드에 맡긴다 — 이 폭에서는 칸이 충분히 넓다. */
-@media (min-width: 768px) and (max-width: 1000px) {
-  header#header > .hide-under-l { display: flex !important; }
-}
-
-/* 2뎁스의 ⋮ 자리를 Manager 헤더의 프로필과 같은 모양으로 — 아바타 + 이름(4자).
-   버튼 자체는 BookStack 것이라 누르면 원래 레이어가 그대로 열린다.
-   **기준이 1000px인 이유**: 이 토글과 레이어가 BookStack의 $bp-l(1000px) 아래에서만
-   동작한다. 우리 서랍 기준(768px)에 맞추면 768~1000px에서 어긋난다. */
-@media (max-width: 1000px) {
-  header#header .mobile-menu-toggle {
-    display: inline-flex !important; align-items: center; gap: 0.375rem;
-    padding: 0.25rem 0.5rem; border-radius: 0.375rem;
-  }
-  header#header .mobile-menu-toggle .avatar {
-    width: 28px; height: 28px; border-radius: 9999px; object-fit: cover;
-  }
-  header#header .acmebloc-mobile-username {
-    font-size: 0.875rem; font-weight: 500; color: #4f46e5;
-    max-width: 6rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  /* 레이어의 '검색' 항목은 뺀다(사용자 결정) — 검색창을 따로 노출하므로 중복이다.
-     원본에서 이 링크가 a.hide-over-l이다(layouts/parts/header-links.blade.php). */
-  header#header nav.header-links a.hide-over-l { display: none !important; }
-}
 </style>
 """
 
