@@ -23,7 +23,7 @@ function BellIcon() {
 // 헤더의 알림벨 — 담당자 지정/멘션/일정 참조자/마감 임박 이벤트가 쌓인 인앱
 // 알림을 보여준다. react-query 등은 이 프로젝트에 없어 다른 곳(Layout.jsx의
 // 세션 체크 등)과 같은 수동 useEffect + setInterval 폴링으로 구현.
-// 모바일 드로어 안에서도 쓴다. inDrawer면 패널을 **위로, 줄 폭에 맞춰** 편다:
+// 모바일 드로어 안에서도 쓴다. inDrawer면 패널을 **줄 폭에 맞춰 아래로** 편다:
 //   - 폭: 기본 w-80(320px)은 드로어(288px)보다 넓어 밖으로 삐져나간다. left/right를
 //     0으로 두되, 그 기준이 되도록 이 컴포넌트는 static이 되고 바깥 줄이 relative를
 //     맡는다(벨 버튼만 감싸면 기준 폭이 28px이 되어 패널이 그만큼 쪼그라든다).
@@ -78,11 +78,12 @@ function NotificationBell({ className = 'relative mr-3 flex items-center', inDra
     }
   }
 
+  // setState 업데이터 안에서 loadList()를 부르지 않는다 — StrictMode가 업데이터를
+  // 두 번 실행해서 열 때마다 목록을 두 번 받아왔다.
   const toggleOpen = () => {
-    setOpen((v) => {
-      if (!v) loadList()
-      return !v
-    })
+    const next = !open
+    setOpen(next)
+    if (next) loadList()
   }
 
   const openItem = async (item) => {

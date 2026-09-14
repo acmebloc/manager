@@ -1185,7 +1185,7 @@ path = sys.argv[1]
 with open(path) as f:
     content = f.read()
 
-if "MANAGER-NAV-V20" in content:
+if "MANAGER-NAV-V21" in content:
     print("already patched, skipping")
     raise SystemExit(0)
 
@@ -1193,7 +1193,7 @@ m = re.search(r'<!-- MANAGER-NAV(-V\d+)? -->.*?</style>\n', content, re.S)
 if not m:
     raise SystemExit("old MANAGER-NAV block not found — aborting")
 
-snippet = """<!-- MANAGER-NAV-V20 -->
+snippet = """<!-- MANAGER-NAV-V21 -->
 <input type="checkbox" id="acmebloc-nav-toggle" class="acmebloc-nav-toggle" aria-label="메뉴 열기">
 <div class="acmebloc-mobilebar">
     <label for="acmebloc-nav-toggle" class="acmebloc-burger"><span></span><span></span><span></span></label>
@@ -1257,9 +1257,8 @@ snippet = """<!-- MANAGER-NAV-V20 -->
   /* 서랍 안의 게시판 하위메뉴 — 위에서 숨겼으니 여기서 되살린다.
      라벨(.acmebloc-navgroup)도 함께 되살려야 한다. display를 안 주면 위의
      display:none이 그대로 이겨 "게시판 메뉴" 글자가 사라진다. */
-  .acmebloc-topnav a.acmebloc-subitem { display: block; }
+  .acmebloc-topnav a.acmebloc-subitem { display: block; padding-left: 2rem; color: #4f46e5; }
   .acmebloc-navgroup { display: block; margin: 0.5rem 1rem 0.25rem; padding-top: 0.5rem; border-top: 1px solid #e5e7eb; font-size: 0.75rem; color: #9ca3af; }
-  .acmebloc-topnav a.acmebloc-subitem { padding-left: 2rem; color: #4f46e5; }
 
   /* 공간·문서함은 서랍으로 옮겼으니 2뎁스에서는 숨긴다. 12번에서 넣은
      margin-left:210px이 좁은 화면에서 두 링크를 오른쪽 끝으로 밀어 글자가 세로로
@@ -1270,19 +1269,21 @@ snippet = """<!-- MANAGER-NAV-V20 -->
   /* **그리드를 끄고 한 줄 배치로 바꾼다.** #header는 class="... grid"라 자식들이
      칸을 나눠 갖는데, 좁은 화면에서는 칸이 너무 좁아 글자가 세로로 쪼개진다
      (V10에서 실제로 그렇게 나왔다).
-     배치는 [검색창 .......... 아바타+이름] 한 줄이다(사용자 지정). 프로필을 우리
+     배치는 [검색창 .......... 아바타▾] 한 줄이다(사용자 지정). 프로필을 우리
      1뎁스 줄로 올리지 못하는 이유: 그 버튼은 BookStack의 header-mobile-toggle
      컴포넌트에 refs로 묶여 있어 <header> 밖으로 꺼내면 레이어가 열리지 않는다. */
   header#header {
     display: flex !important; flex-wrap: nowrap; align-items: center; gap: 0.5rem;
   }
-  /* 아바타+이름이 든 줄 — 오른쪽 끝으로 */
+  /* 프로필이 든 줄 — 오른쪽 끝으로 */
   header#header > .flex-container-row { order: 2; flex: 0 0 auto; margin-left: auto; }
   /* 레이어는 헤더 **아래쪽 오른쪽**에 띄운다. 원본은 margin-top으로만 밀어두는데,
      한 줄 배치로 바꾸면서 프로필 버튼 위에 겹쳐 앉는 경우가 생긴다. 헤더 바닥을
-     기준으로 붙여 항상 아래로 열리게 한다. */
+     기준으로 붙여 항상 아래로 열리게 한다.
+     order는 주지 않는다 — 이 요소는 position:absolute라 flex 항목이 아니고,
+     absolutely positioned 자식에게 order는 아무 효과가 없다. */
   header#header > nav.header-links {
-    order: 3; top: 100% !important; margin-top: 0.25rem !important; inset-inline-end: 1rem !important;
+    top: 100% !important; margin-top: 0.25rem !important; inset-inline-end: 1rem !important;
   }
 
   /* 문서 검색을 좁은 화면에서도 보여준다. **hide-under-l은 .search-box가 아니라
@@ -1298,13 +1299,12 @@ snippet = """<!-- MANAGER-NAV-V20 -->
   header#header > .hide-under-l {
     display: block !important; order: 1; flex: 1 1 0; min-width: 0; max-width: 250px;
   }
-  header#header > .hide-under-l .search-box,
-  header#header > .hide-under-l form { width: 100%; min-width: 0; }
-  /* box-sizing을 명시한다 — content-box면 위 max-width에 좌우 패딩·테두리가 더해져
-     실제 상자가 250px을 넘는다(실측 268px). */
-  header#header #header-search-box-input {
-    width: 100%; min-width: 0; max-width: 250px; box-sizing: border-box;
-  }
+  /* .search-box는 검색 **폼 자체**에 붙은 클래스다(layouts/parts/header-search.blade.php).
+     250px 상한은 위 칸이 이미 쥐고 있으므로 여기선 그 폭을 채우기만 하면 된다 —
+     입력칸에 max-width나 box-sizing을 따로 주지 않는다(BookStack이 `* { box-sizing:
+     border-box }`를 전역으로 건다, _html.scss). */
+  header#header > .hide-under-l .search-box { width: 100%; }
+  header#header #header-search-box-input { width: 100%; }
 }
 
 /* 768~1000px을 1001px 이상과 **같은 모습**으로 되돌린다(사용자 결정).
@@ -1336,22 +1336,23 @@ snippet = """<!-- MANAGER-NAV-V20 -->
   header#header .user-name.hide-under-l { display: inline-flex !important; }
   header#header .hide-over-l { display: none !important; }
 
-  /* ③ 카드로 접힌 헤더 링크를 가로 배치로 (_header.scss 222-278행의 반대) */
+  /* ③ 카드로 접힌 헤더 링크를 가로 배치로 (_header.scss 222-278행의 반대).
+     **원본이 그 구간에서 실제로 바꾸는 것만 되돌린다.** 예를 들어 align-items나
+     justify-content는 원본 데스크톱 규칙이 미디어쿼리 **밖**에 있어 좁은 화면에서도
+     그대로 살아 있다 — 여기서 다시 쓸 필요가 없다. */
   header#header nav.header-links {
-    display: flex !important; align-items: center; justify-content: end;
-    position: static !important; z-index: auto;
+    display: flex !important; position: static !important; z-index: auto;
     background-color: transparent !important; box-shadow: none !important;
     border-radius: 0 !important; overflow: visible !important;
     margin-top: 0 !important; padding: 0 !important; inset-inline-end: auto !important;
   }
   header#header .links { display: inline-block !important; vertical-align: top; }
   header#header .links a {
-    display: inline-block !important; padding: 10px 16px !important;
-    border-radius: 3px; gap: normal;
+    display: inline-block !important; padding: 10px 16px !important; border-radius: 3px;
   }
   header#header .links a svg { width: 1em !important; margin-inline-end: 6px !important; }
   header#header .dropdown-container {
-    display: inline-block !important; vertical-align: top; position: relative;
+    display: inline-block !important;
     padding-inline-start: 16px !important; padding-inline-end: 0 !important;
   }
 
@@ -1360,17 +1361,18 @@ snippet = """<!-- MANAGER-NAV-V20 -->
      동작은 JS가 인라인 style.display로 하는데(components/dropdown.js), 인라인
      스타일은 !important를 이기지 못한다. 그래서 열릴 때 함께 붙는 .menuIn 클래스를
      걸쇠로 쓴다(닫을 때 제거된다).
-     카드 값은 BookStack 데스크톱 원본 .dropdown-menu 그대로다(_lists.scss 675행).
+     되돌릴 값은 BookStack 데스크톱 원본 .dropdown-menu 그대로다(_lists.scss 675행).
      V18에서 `revert`로 되돌리려다 데스크톱 스타일까지 지워져 항목이 글자 단위로
-     쪼개졌던 자리 — 이번엔 원본 값을 직접 적어 그 실패를 되풀이하지 않는다. */
+     쪼개졌던 자리 — 이번엔 원본 값을 직접 적어 그 실패를 되풀이하지 않는다.
+     **원본이 좁은 화면에서 실제로 바꾸는 건 7가지뿐이다** — display·position·
+     background-color·border·padding·margin·box-shadow. 나머지(min-width, 그림자
+     반경, max-height, z-index 등)는 .dropdown-menu 기본형이 그대로 살아 있어
+     다시 적을 필요가 없다. */
   header#header .dropdown-container ul {
     display: none !important; position: absolute !important;
-    z-index: 999; top: 0; inset-inline-end: 0;
     margin: 16px 0 !important; padding: 6px 0 !important;
-    min-width: 180px; max-height: 500px; overflow-y: auto;
-    list-style: none; text-align: start !important;
-    background-color: #fff !important; color: #555;
-    border-radius: 3px; box-shadow: 0 1px 6px 0 rgba(0, 0, 0, 0.18) !important;
+    background-color: #fff !important;
+    box-shadow: 0 1px 6px 0 rgba(0, 0, 0, 0.18) !important;
   }
   header#header .dropdown-container ul.menuIn { display: block !important; }
   /* 항목은 모바일 규칙과 데스크톱(.icon-item)이 거의 같다 — 다른 건 세로 정렬과
@@ -1396,21 +1398,24 @@ snippet = """<!-- MANAGER-NAV-V20 -->
    **미디어쿼리 밖에 둔다.** 이 버튼(hide-over-l 래퍼)과 레이어의 검색 링크는
    BookStack이 1000px 이상에서, 우리가 768~1000에서 각각 숨기므로 기본 CSS에 둬도
    767px 이하에서만 보인다. */
+/* 여기 있는 선언은 전부 **원본 값을 실제로 덮는 것만** 남겼다(지워보고 화면이
+   바뀌는지 재서 확인). 원본 .mobile-menu-toggle은 `font-size: 2em`, `padding: 0 6px`,
+   `border: 2px solid rgba(255,255,255,.8)`, `color/fill: #FFF`다(_header.scss) —
+   테두리 상자와 28px짜리 흰 화살표가 그래서 나온다. line-height:1은 원본에 이미
+   있어 다시 쓰지 않는다. */
 header#header .mobile-menu-toggle {
-  display: inline-flex !important; align-items: center; gap: 6px;
+  display: inline-flex; align-items: center; gap: 6px;
   padding: 0; border: 0; background: none; color: #4f46e5;
-  /* 원본은 font-size: 2em에 흰 테두리다(_header.scss). .svg-icon이 1em이라
-     글자 크기를 안 잡으면 캐럿이 28px로 부푼다. 18px은 데스크톱 캐럿과 같은 값. */
-  font-size: 18px; line-height: 1;
+  /* .svg-icon이 1em이라 글자 크기가 곧 캐럿 크기다. 18px은 데스크톱 캐럿과 같은 값. */
+  font-size: 18px;
 }
 header#header .mobile-menu-toggle .avatar {
   width: 30px; height: 30px; border-radius: 9999px; object-fit: cover;
 }
-/* 원본 .mobile-menu-toggle은 fill:#FFF라 흰 화살표가 된다 — currentColor로 되돌린다.
-   .svg-icon의 bottom:-0.105em도 여기선 어긋나 보여 0으로 맞춘다. */
-header#header .mobile-menu-toggle .svg-icon {
-  width: 1em; height: 1em; margin: 0; bottom: 0; fill: currentColor;
-}
+/* .svg-icon의 크기·fill은 원본(_text.scss)이 이미 원하는 값이라 건드리지 않는다.
+   덮을 것은 둘뿐 — 마지막 요소인데도 붙는 오른쪽 여백 6px, 그리고 아이콘을 살짝
+   내리는 bottom:-0.105em(여기선 1.9px 내려가 아바타와 어긋난다). */
+header#header .mobile-menu-toggle .svg-icon { margin: 0; bottom: 0; }
 /* 레이어의 '검색' 항목은 뺀다(사용자 결정) — 검색창을 따로 노출하므로 중복이다.
    원본에서 이 링크가 a.hide-over-l이다(layouts/parts/header-links.blade.php). */
 header#header nav.header-links a.hide-over-l { display: none !important; }
@@ -1482,7 +1487,7 @@ sudo -u bookstack bash -c "cd $BS && php artisan view:clear"
 > **11번의 톤 통일 CSS가 위 스니펫에 그대로 들어 있다.** 이 패치는 V9 블록을 통째로
 > 교체하므로, 톤 CSS를 같이 싣지 않으면 게시판 색·폰트가 원래대로 돌아간다. 위
 > `<style>`의 뒷부분(`header#header` 이하)이 바로 그 부분이니 **잘라내지 말 것.**
-> 마커는 내용이 바뀔 때마다 올린다(현재 V20). 정규식이 버전 무관하게
+> 마커는 내용이 바뀔 때마다 올린다(현재 V21). 정규식이 버전 무관하게
 > `<!-- MANAGER-NAV -->` ~ `</style>`를 잡으므로, 재실행하면 직전 버전 블록을 찾아
 > 통째로 교체한다.
 
