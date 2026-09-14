@@ -136,9 +136,13 @@ function GanttChart({
           className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700"
         >
           <div className="relative" style={{ width: LABEL_WIDTH + chartWidth }}>
-            {/* 오늘 표시선 — 헤더+모든 행에 걸쳐 세로로 이어진다 */}
+            {/* 오늘 표시선 — 헤더+모든 행에 걸쳐 세로로 이어진다.
+                **일정명 칸(z-2)보다 아래**에 둔다. 가로로 스크롤하면 이 선이 왼쪽에
+                고정된 이름 칸 자리를 지나가는데, 위에 있으면 이름 위에 빨간 줄이
+                그어진 것처럼 보인다. 막대(z-auto)보다는 위라서 막대를 가로지르는
+                모습은 그대로다. */}
             <div
-              className="pointer-events-none absolute top-0 bottom-0 z-[3] w-px bg-red-400"
+              className="pointer-events-none absolute top-0 bottom-0 z-[1] w-px bg-red-400"
               style={{ left: LABEL_WIDTH + todayLeft }}
             />
 

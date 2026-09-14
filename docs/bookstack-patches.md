@@ -1157,7 +1157,7 @@ Manager가 좁은 화면에서 메뉴를 서랍에 넣도록 바뀌었다([Layou
 체크박스를 라벨(햄버거)로 토글하고 `:checked ~` 로 서랍과 덮개를 연다. 페이지를
 이동하면 문서가 새로 로드되므로 서랍은 저절로 닫힌 상태로 시작한다.
 
-**1뎁스에는 검색도 프로필도 넣지 않는다.** 2뎁스(BookStack 원본 헤더)에 이미 둘 다
+**1뎁스에는 햄버거만 둔다 — 검색도 프로필도, 브랜드 글자도 없다.** 2뎁스(BookStack 원본 헤더)에 이미 둘 다
 있어서, 넣으면 한 화면에 검색창이 둘, 프로필이 둘이 된다. 특히 프로필은 **생김새만
 비슷하고 기능이 다르다** — Manager 쪽은 누를 수 없는 표시 전용이고, BookStack 쪽은
 눌러서 여는 드롭다운이다. 기능이 있는 쪽만 남긴다. 데스크톱도 원래 그렇게 되어 있어
@@ -1191,7 +1191,6 @@ snippet = """<!-- MANAGER-NAV-V10 -->
 <input type="checkbox" id="acmebloc-nav-toggle" class="acmebloc-nav-toggle" aria-label="메뉴 열기">
 <div class="acmebloc-mobilebar">
     <label for="acmebloc-nav-toggle" class="acmebloc-burger"><span></span><span></span><span></span></label>
-    <span class="acmebloc-brand">Manager</span>
 </div>
 <label for="acmebloc-nav-toggle" class="acmebloc-nav-backdrop"></label>
 <nav class="acmebloc-topnav" aria-label="Manager 메뉴">
@@ -1215,7 +1214,6 @@ snippet = """<!-- MANAGER-NAV-V10 -->
   .acmebloc-burger { display: inline-flex; flex-direction: column; justify-content: center; gap: 4px; width: 36px; height: 36px; padding: 8px; cursor: pointer; }
   .acmebloc-burger span { display: block; height: 2px; background: #4b5563; border-radius: 1px; }
   .acmebloc-nav-toggle:focus-visible + .acmebloc-mobilebar .acmebloc-burger { outline: 2px solid #4f46e5; outline-offset: 2px; }
-  .acmebloc-brand { font-size: 1rem; font-weight: 600; color: #111827; }
 
   .acmebloc-topnav {
     position: fixed; top: 0; bottom: 0; left: 0; z-index: 60;
@@ -1233,10 +1231,6 @@ snippet = """<!-- MANAGER-NAV-V10 -->
   .acmebloc-nav-toggle:checked ~ .acmebloc-topnav { transform: none; visibility: visible; }
   .acmebloc-nav-toggle:checked ~ .acmebloc-nav-backdrop { opacity: 1; pointer-events: auto; }
 
-  /* 2뎁스(BookStack 원본)에서만 검색을 보여준다 — 원본은 hide-under-l로 좁은
-     화면에서 검색을 숨기는데, 게시판에서 문서 검색은 자주 쓰므로 되살린다.
-     한 줄을 통째로 쓰게 해서 데스크톱용 칸에 끼어 찌그러지지 않게 한다. */
-  header#header .search-box.hide-under-l { display: block !important; grid-column: 1 / -1 !important; margin: 0.5rem 0 !important; }
 }
 
 /* BookStack 원본 헤더는 그대로 두고 톤만 Manager에 맞춘다 (구조/DOM은 안 건드림) */
@@ -1271,6 +1265,21 @@ header#header, header#header * {
 }
 #header-search-box-button { color: #6b7280 !important; }
 .dropdown-container .user-name { color: #4f46e5 !important; }
+
+/* 2뎁스(BookStack 원본)의 검색을 좁은 화면에서도 보여준다 — 원본은 hide-under-l로
+   숨기는데, 게시판에서 문서 검색은 자주 쓰므로 되살린다. 한 줄을 통째로 쓰게 해서
+   데스크톱용 그리드 칸에 끼어 찌그러지지 않게 한다.
+   **기준이 1000px인 이유**: hide-under-l의 l이 BookStack에서 1000px이다
+   (resources/sass/_vars.scss의 $bp-l). 우리 서랍 기준(768px)에 맞추면
+   768~1000px 구간에서는 원본이 계속 숨겨 검색이 사라진다.
+   우리 규칙은 id+클래스 2개라 원본(.hide-under-l)보다 우선순위가 높다. */
+@media (max-width: 1000px) {
+  header#header .search-box.hide-under-l {
+    display: block !important;
+    grid-column: 1 / -1 !important;
+    margin: 0.5rem 0 !important;
+  }
+}
 </style>
 """
 
@@ -1291,8 +1300,7 @@ sudo -u bookstack bash -c "cd $BS && php artisan view:clear"
 
 ### 적용 후 확인
 
-1. 휴대폰 폭(390px)에서 1뎁스가 `[≡] Manager` 한 줄인지, 햄버거를 누르면 왼쪽에서
-   메뉴 6개가 나오는지.
+1. 휴대폰 폭(390px)에서 1뎁스가 햄버거 한 줄인지, 누르면 왼쪽에서 메뉴 6개가 나오는지.
 2. 서랍 바깥(덮개)을 누르면 닫히는지.
 3. 2뎁스에 **문서 검색창이 보이는지** — 이 부분이 가장 불확실하다. BookStack 헤더는
    CSS 그리드인데 검색창이 데스크톱용 칸에 끼어들어 배치가 어그러질 수 있다.
