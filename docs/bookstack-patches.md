@@ -1185,7 +1185,7 @@ path = sys.argv[1]
 with open(path) as f:
     content = f.read()
 
-if "MANAGER-NAV-V17" in content:
+if "MANAGER-NAV-V18" in content:
     print("already patched, skipping")
     raise SystemExit(0)
 
@@ -1193,7 +1193,7 @@ m = re.search(r'<!-- MANAGER-NAV(-V\d+)? -->.*?</style>\n', content, re.S)
 if not m:
     raise SystemExit("old MANAGER-NAV block not found — aborting")
 
-snippet = """<!-- MANAGER-NAV-V17 -->
+snippet = """<!-- MANAGER-NAV-V18 -->
 <input type="checkbox" id="acmebloc-nav-toggle" class="acmebloc-nav-toggle" aria-label="메뉴 열기">
 <div class="acmebloc-mobilebar">
     <label for="acmebloc-nav-toggle" class="acmebloc-burger"><span></span><span></span><span></span></label>
@@ -1304,6 +1304,58 @@ snippet = """<!-- MANAGER-NAV-V17 -->
      실제 상자가 250px을 넘는다(실측 268px). */
   header#header #header-search-box-input {
     width: 100%; min-width: 0; max-width: 250px; box-sizing: border-box;
+  }
+}
+
+/* 768~1000px을 1001px 이상과 **같은 모습**으로 되돌린다(사용자 결정).
+   왜 필요한가: BookStack은 자기 기준 $bp-l(=1000px) 아래에서 헤더를 모바일 모양으로
+   바꾼다(resources/sass/_header.scss). 검색창과 계정 버튼(hide-under-l)을 숨기고,
+   설정·계정 메뉴를 nav.header-links라는 떠 있는 카드로 접고, ⋮(hide-over-l)를
+   내놓는다. 우리 기준은 767px이라 768~1000이 어긋나는 구간으로 남는다.
+   미디어쿼리 없이는 되돌릴 수 없다 — 접는 쪽이 조건부 CSS이기 때문이다. */
+@media (min-width: 768px) and (max-width: 1000px) {
+  /* 표시/숨김 헬퍼를 1001px 이상 기준으로 뒤집는다 */
+  header#header .hide-under-l { display: revert !important; }
+  header#header .hide-over-l { display: none !important; }
+
+  /* 카드로 접힌 헤더 링크를 가로 배치로 되돌린다 */
+  header#header nav.header-links {
+    display: flex !important; align-items: center; gap: 0.75rem;
+    position: static !important; background: transparent !important;
+    box-shadow: none !important; border-radius: 0 !important;
+    margin-top: 0 !important; padding: 0 !important; overflow: visible !important;
+    inset-inline-end: auto !important;
+  }
+  header#header nav.header-links .links { display: flex !important; align-items: center; gap: 0.75rem; }
+  header#header nav.header-links .links a {
+    display: inline-flex !important; grid-template-columns: none !important;
+    padding: 0 !important; gap: 0.375rem !important;
+  }
+  header#header .dropdown-container { display: inline-block !important; padding-inline-start: revert !important; }
+
+  /* 계정 메뉴를 다시 '눌러서 여는 드롭다운'으로. 모바일 규칙은 이 ul을
+     display:block !important로 **항상 펼쳐두므로** 그걸 이겨야 한다.
+     다만 여는 동작은 JS가 인라인 style.display로 하는데(components/dropdown.js),
+     인라인 스타일은 !important를 이기지 못한다. 그래서 열릴 때 함께 붙는
+     .menuIn 클래스를 걸쇠로 쓴다(닫을 때 제거된다). */
+  /* 카드 모양은 **우리 값으로 직접 준다.** revert로 되돌리려 했더니 BookStack의
+     데스크톱 스타일까지 같이 지워져 항목이 세로로 쪼개진 채 나왔다(실측). 그
+     스타일이 헤더 밖 여러 파일에 흩어져 있어 그대로 복원하기도 어렵다. 어차피
+     10·11번에서 쓰는 톤과 같은 색이라 여기서 정의하는 편이 예측 가능하다. */
+  header#header .dropdown-container ul {
+    display: none !important; position: absolute !important;
+    inset-inline-end: 0; min-width: 11rem; margin-top: 0.25rem; padding: 0.25rem 0;
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 0.375rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  }
+  header#header .dropdown-container ul.menuIn { display: block !important; }
+  /* 항목은 한 줄짜리 링크로. BookStack 모바일 규칙이 grid(16px+auto)로 잡아두는데,
+     카드 폭에 따라 글자 칸이 눌려 **글자 단위로 줄바꿈되는** 일이 있었다(실측).
+     nowrap으로 그 가능성 자체를 없앤다. */
+  header#header .dropdown-container ul li a {
+    display: flex !important; align-items: center; gap: 0.5rem;
+    padding: 0.5rem 0.75rem !important; white-space: nowrap;
+    grid-template-columns: none !important;
   }
 }
 
