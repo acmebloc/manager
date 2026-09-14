@@ -1185,7 +1185,7 @@ path = sys.argv[1]
 with open(path) as f:
     content = f.read()
 
-if "MANAGER-NAV-V11" in content:
+if "MANAGER-NAV-V13" in content:
     print("already patched, skipping")
     raise SystemExit(0)
 
@@ -1193,13 +1193,16 @@ m = re.search(r'<!-- MANAGER-NAV(-V\d+)? -->.*?</style>\n', content, re.S)
 if not m:
     raise SystemExit("old MANAGER-NAV block not found — aborting")
 
-snippet = """<!-- MANAGER-NAV-V11 -->
+snippet = """<!-- MANAGER-NAV-V13 -->
 <input type="checkbox" id="acmebloc-nav-toggle" class="acmebloc-nav-toggle" aria-label="메뉴 열기">
 <div class="acmebloc-mobilebar">
     <label for="acmebloc-nav-toggle" class="acmebloc-burger"><span></span><span></span><span></span></label>
 </div>
 <label for="acmebloc-nav-toggle" class="acmebloc-nav-backdrop"></label>
 <nav class="acmebloc-topnav" aria-label="Manager 메뉴">
+    <label for="acmebloc-nav-toggle" class="acmebloc-navclose" aria-label="메뉴 닫기">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18" stroke-linecap="round"/></svg>
+    </label>
     <a href="/dashboard">홈</a>
     <a href="/projects">프로젝트</a>
     <a href="/tasks">일감</a>
@@ -1212,7 +1215,7 @@ snippet = """<!-- MANAGER-NAV-V11 -->
 </nav>
 <style>
 .acmebloc-nav-toggle { position: absolute; width: 1px; height: 1px; opacity: 0; }
-.acmebloc-mobilebar, .acmebloc-nav-backdrop { display: none; }
+.acmebloc-mobilebar, .acmebloc-nav-backdrop, .acmebloc-navclose { display: none; }
 .acmebloc-topnav { display: flex; align-items: center; gap: 0.25rem; border-bottom: 1px solid #e5e7eb; padding: 0 1rem; background: #fff; }
 .acmebloc-topnav a { display: inline-block; padding: 0.75rem 1rem; font-size: 0.875rem; line-height: 1.25rem; font-weight: 500; color: #6b7280; text-decoration: none; border-bottom: 2px solid transparent; }
 .acmebloc-topnav a:hover { color: #111827; }
@@ -1239,6 +1242,13 @@ snippet = """<!-- MANAGER-NAV-V11 -->
 
   .acmebloc-nav-toggle:checked ~ .acmebloc-topnav { transform: none; visibility: visible; }
   .acmebloc-nav-toggle:checked ~ .acmebloc-nav-backdrop { opacity: 1; pointer-events: auto; }
+
+  /* 닫기(X) — Manager 서랍과 같은 자리(오른쪽 위)에 둔다. 덮개를 눌러도 닫히지만
+     닫는 버튼이 보이지 않으면 갇힌 것처럼 느껴진다. */
+  .acmebloc-navclose { display: flex; align-items: center; justify-content: center;
+    align-self: flex-end; width: 36px; height: 36px; margin: 0 0.5rem 0.25rem;
+    border-radius: 0.375rem; color: #6b7280; cursor: pointer; }
+  .acmebloc-navclose:hover { background: #f3f4f6; }
 
   /* 서랍 안의 게시판 하위메뉴 */
   .acmebloc-navgroup { margin: 0.5rem 1rem 0.25rem; padding-top: 0.5rem; border-top: 1px solid #e5e7eb; font-size: 0.75rem; color: #9ca3af; }
@@ -1295,10 +1305,45 @@ header#header, header#header * {
 }
 #header-search-box-button { color: #6b7280 !important; }
 .dropdown-container .user-name { color: #4f46e5 !important; }
+/* 2뎁스의 ⋮ 자리를 Manager 헤더의 프로필과 같은 모양으로 — 아바타 + 이름(4자).
+   버튼 자체는 BookStack 것이라 누르면 원래 레이어가 그대로 열린다.
+   **기준이 1000px인 이유**: 이 토글과 레이어가 BookStack의 $bp-l(1000px) 아래에서만
+   동작한다. 우리 서랍 기준(768px)에 맞추면 768~1000px에서 어긋난다. */
+@media (max-width: 1000px) {
+  header#header .mobile-menu-toggle {
+    display: inline-flex !important; align-items: center; gap: 0.375rem;
+    padding: 0.25rem 0.5rem; border-radius: 0.375rem;
+  }
+  header#header .mobile-menu-toggle .avatar {
+    width: 28px; height: 28px; border-radius: 9999px; object-fit: cover;
+  }
+  header#header .acmebloc-mobile-username {
+    font-size: 0.875rem; font-weight: 500; color: #4f46e5;
+    max-width: 6rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* 레이어의 '검색' 항목은 뺀다(사용자 결정) — 검색창을 따로 노출하므로 중복이다.
+     원본에서 이 링크가 a.hide-over-l이다(layouts/parts/header-links.blade.php). */
+  header#header nav.header-links a.hide-over-l { display: none !important; }
+}
 </style>
 """
 
 content = content[:m.start()] + snippet + content[m.end():]
+
+# ⋮ 아이콘 대신 아바타+이름을 넣는다. **레이어를 새로 만들지 않는다** — 모바일에서
+# nav.header-links가 이미 절대배치 카드(레이어)이고 이 버튼이 .show를 붙여 연다
+# (BookStack resources/sass/_header.scss의 smaller-than($bp-l) 블록). 버튼 안쪽만
+# 갈아끼우면 여는 동작은 원본 그대로 살아 있다.
+if "ACMEBLOC-MOBILE-USER" not in content:
+    m2 = re.search(r'(<button[^>]*class="[^"]*mobile-menu-toggle[^"]*"[^>]*>)(.*?)(</button>)', content, re.S)
+    if not m2:
+        raise SystemExit("mobile-menu-toggle button not found — aborting")
+    inner = ('{{-- ACMEBLOC-MOBILE-USER --}}'
+             '<img class="avatar" src="{{ user()->getAvatar(30) }}" alt="">'
+             '<span class="acmebloc-mobile-username">{{ user()->getShortName(4) }}</span>')
+    content = content[:m2.start(2)] + inner + content[m2.end(2):]
+    print("toggle button replaced with avatar+name")
+
 with open(path, 'w') as f:
     f.write(content)
 print("patched")
