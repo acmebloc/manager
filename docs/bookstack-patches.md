@@ -1185,7 +1185,7 @@ path = sys.argv[1]
 with open(path) as f:
     content = f.read()
 
-if "MANAGER-NAV-V15" in content:
+if "MANAGER-NAV-V16" in content:
     print("already patched, skipping")
     raise SystemExit(0)
 
@@ -1193,7 +1193,7 @@ m = re.search(r'<!-- MANAGER-NAV(-V\d+)? -->.*?</style>\n', content, re.S)
 if not m:
     raise SystemExit("old MANAGER-NAV block not found — aborting")
 
-snippet = """<!-- MANAGER-NAV-V15 -->
+snippet = """<!-- MANAGER-NAV-V16 -->
 <input type="checkbox" id="acmebloc-nav-toggle" class="acmebloc-nav-toggle" aria-label="메뉴 열기">
 <div class="acmebloc-mobilebar">
     <label for="acmebloc-nav-toggle" class="acmebloc-burger"><span></span><span></span><span></span></label>
@@ -1215,7 +1215,11 @@ snippet = """<!-- MANAGER-NAV-V15 -->
 </nav>
 <style>
 .acmebloc-nav-toggle { position: absolute; width: 1px; height: 1px; opacity: 0; }
-.acmebloc-mobilebar, .acmebloc-nav-backdrop, .acmebloc-navclose { display: none; }
+/* 서랍 전용 요소는 넓은 화면에서 전부 숨긴다. **게시판 하위메뉴(게시판 메뉴/공간/
+   문서함)도 여기 포함된다** — 안 숨기면 1뎁스 가로 메뉴 끝에 그대로 딸려 나오고,
+   2뎁스에도 같은 공간·문서함이 있어 한 화면에 두 번 보인다(실제로 그랬다). */
+.acmebloc-mobilebar, .acmebloc-nav-backdrop, .acmebloc-navclose,
+.acmebloc-navgroup, .acmebloc-topnav a.acmebloc-subitem { display: none; }
 .acmebloc-topnav { display: flex; align-items: center; gap: 0.25rem; border-bottom: 1px solid #e5e7eb; padding: 0 1rem; background: #fff; }
 .acmebloc-topnav a { display: inline-block; padding: 0.75rem 1rem; font-size: 0.875rem; line-height: 1.25rem; font-weight: 500; color: #6b7280; text-decoration: none; border-bottom: 2px solid transparent; }
 .acmebloc-topnav a:hover { color: #111827; }
@@ -1250,8 +1254,11 @@ snippet = """<!-- MANAGER-NAV-V15 -->
     border-radius: 0.375rem; color: #6b7280; cursor: pointer; }
   .acmebloc-navclose:hover { background: #f3f4f6; }
 
-  /* 서랍 안의 게시판 하위메뉴 */
-  .acmebloc-navgroup { margin: 0.5rem 1rem 0.25rem; padding-top: 0.5rem; border-top: 1px solid #e5e7eb; font-size: 0.75rem; color: #9ca3af; }
+  /* 서랍 안의 게시판 하위메뉴 — 위에서 숨겼으니 여기서 되살린다.
+     라벨(.acmebloc-navgroup)도 함께 되살려야 한다. display를 안 주면 위의
+     display:none이 그대로 이겨 "게시판 메뉴" 글자가 사라진다. */
+  .acmebloc-topnav a.acmebloc-subitem { display: block; }
+  .acmebloc-navgroup { display: block; margin: 0.5rem 1rem 0.25rem; padding-top: 0.5rem; border-top: 1px solid #e5e7eb; font-size: 0.75rem; color: #9ca3af; }
   .acmebloc-topnav a.acmebloc-subitem { padding-left: 2rem; color: #4f46e5; }
 
   /* 공간·문서함은 서랍으로 옮겼으니 2뎁스에서는 숨긴다. 12번에서 넣은
@@ -1289,11 +1296,15 @@ snippet = """<!-- MANAGER-NAV-V15 -->
      nowrap과 함께 두어 아무리 좁아도 한 줄을 유지한다 — 검색창이 아주 좁아지는
      건 감수한다(사용자 결정). */
   header#header > .hide-under-l {
-    display: block !important; order: 1; flex: 1 1 0; min-width: 0;
+    display: block !important; order: 1; flex: 1 1 0; min-width: 0; max-width: 250px;
   }
   header#header > .hide-under-l .search-box,
   header#header > .hide-under-l form { width: 100%; min-width: 0; }
-  header#header #header-search-box-input { width: 100%; min-width: 0; }
+  /* box-sizing을 명시한다 — content-box면 위 max-width에 좌우 패딩·테두리가 더해져
+     실제 상자가 250px을 넘는다(실측 268px). */
+  header#header #header-search-box-input {
+    width: 100%; min-width: 0; max-width: 250px; box-sizing: border-box;
+  }
 }
 
 /* BookStack 원본 헤더는 그대로 두고 톤만 Manager에 맞춘다 (구조/DOM은 안 건드림) */
@@ -1328,6 +1339,13 @@ header#header, header#header * {
 }
 #header-search-box-button { color: #6b7280 !important; }
 .dropdown-container .user-name { color: #4f46e5 !important; }
+/* 768~1000px — 1뎁스는 가로 메뉴 그대로지만, BookStack이 hide-under-l(=1000px
+   미만)로 자기 검색을 숨겨 이 구간에는 검색창이 아예 없었다. 되살린다. 배치는
+   원본 그리드에 맡긴다 — 이 폭에서는 칸이 충분히 넓다. */
+@media (min-width: 768px) and (max-width: 1000px) {
+  header#header > .hide-under-l { display: flex !important; }
+}
+
 /* 2뎁스의 ⋮ 자리를 Manager 헤더의 프로필과 같은 모양으로 — 아바타 + 이름(4자).
    버튼 자체는 BookStack 것이라 누르면 원래 레이어가 그대로 열린다.
    **기준이 1000px인 이유**: 이 토글과 레이어가 BookStack의 $bp-l(1000px) 아래에서만
