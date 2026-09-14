@@ -1185,7 +1185,7 @@ path = sys.argv[1]
 with open(path) as f:
     content = f.read()
 
-if "MANAGER-NAV-V19" in content:
+if "MANAGER-NAV-V20" in content:
     print("already patched, skipping")
     raise SystemExit(0)
 
@@ -1193,7 +1193,7 @@ m = re.search(r'<!-- MANAGER-NAV(-V\d+)? -->.*?</style>\n', content, re.S)
 if not m:
     raise SystemExit("old MANAGER-NAV block not found — aborting")
 
-snippet = """<!-- MANAGER-NAV-V19 -->
+snippet = """<!-- MANAGER-NAV-V20 -->
 <input type="checkbox" id="acmebloc-nav-toggle" class="acmebloc-nav-toggle" aria-label="메뉴 열기">
 <div class="acmebloc-mobilebar">
     <label for="acmebloc-nav-toggle" class="acmebloc-burger"><span></span><span></span><span></span></label>
@@ -1387,21 +1387,29 @@ snippet = """<!-- MANAGER-NAV-V19 -->
   header#header .search-box { max-width: 200px; }
 }
 
-/* 2뎁스의 ⋮ 자리를 Manager 헤더의 프로필과 같은 모양으로 — 아바타 + 이름(4자).
+/* 2뎁스의 ⋮ 자리를 **넓은 화면의 계정 버튼과 같은 모양**으로 — 아바타 + 캐럿,
+   이름은 없다(사용자 결정). 원래는 아바타+닉네임 4자였는데, 같은 화면의 1001px
+   이상에서 BookStack이 이름을 감추고 아바타+캐럿만 보여주므로(between($bp-l,
+   $bp-xl)) 폭만 바뀌었는데 프로필 생김새가 달라지는 꼴이었다. 캐럿이 있어야
+   '눌러서 여는 메뉴'라는 것도 드러난다.
    버튼 자체는 BookStack 것이라 누르면 원래 레이어가 그대로 열린다.
    **미디어쿼리 밖에 둔다.** 이 버튼(hide-over-l 래퍼)과 레이어의 검색 링크는
-   BookStack이 이미 1000px 이상에서 숨기므로, 기본 CSS에 둬도 넓은 화면은 전혀
-   달라지지 않는다. 덕분에 미디어쿼리를 하나(767px)로 유지할 수 있다. */
+   BookStack이 1000px 이상에서, 우리가 768~1000에서 각각 숨기므로 기본 CSS에 둬도
+   767px 이하에서만 보인다. */
 header#header .mobile-menu-toggle {
-  display: inline-flex !important; align-items: center; gap: 0.375rem;
-  padding: 0.25rem 0.5rem; border-radius: 0.375rem;
+  display: inline-flex !important; align-items: center; gap: 6px;
+  padding: 0; border: 0; background: none; color: #4f46e5;
+  /* 원본은 font-size: 2em에 흰 테두리다(_header.scss). .svg-icon이 1em이라
+     글자 크기를 안 잡으면 캐럿이 28px로 부푼다. 18px은 데스크톱 캐럿과 같은 값. */
+  font-size: 18px; line-height: 1;
 }
 header#header .mobile-menu-toggle .avatar {
-  width: 28px; height: 28px; border-radius: 9999px; object-fit: cover;
+  width: 30px; height: 30px; border-radius: 9999px; object-fit: cover;
 }
-header#header .acmebloc-mobile-username {
-  font-size: 0.875rem; font-weight: 500; color: #4f46e5;
-  max-width: 6rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+/* 원본 .mobile-menu-toggle은 fill:#FFF라 흰 화살표가 된다 — currentColor로 되돌린다.
+   .svg-icon의 bottom:-0.105em도 여기선 어긋나 보여 0으로 맞춘다. */
+header#header .mobile-menu-toggle .svg-icon {
+  width: 1em; height: 1em; margin: 0; bottom: 0; fill: currentColor;
 }
 /* 레이어의 '검색' 항목은 뺀다(사용자 결정) — 검색창을 따로 노출하므로 중복이다.
    원본에서 이 링크가 a.hide-over-l이다(layouts/parts/header-links.blade.php). */
@@ -1444,19 +1452,23 @@ header#header, header#header * {
 
 content = content[:m.start()] + snippet + content[m.end():]
 
-# ⋮ 아이콘 대신 아바타+이름을 넣는다. **레이어를 새로 만들지 않는다** — 모바일에서
+# ⋮ 아이콘 대신 아바타+캐럿을 넣는다. **레이어를 새로 만들지 않는다** — 모바일에서
 # nav.header-links가 이미 절대배치 카드(레이어)이고 이 버튼이 .show를 붙여 연다
 # (BookStack resources/sass/_header.scss의 smaller-than($bp-l) 블록). 버튼 안쪽만
 # 갈아끼우면 여는 동작은 원본 그대로 살아 있다.
-if "ACMEBLOC-MOBILE-USER" not in content:
+# 캐럿은 BookStack의 @icon을 그대로 쓴다 — 넓은 화면 계정 버튼이 쓰는 바로 그
+# 아이콘이라, 아이콘 셋이 바뀌어도 양쪽이 같이 따라간다.
+# 마커에 버전을 붙인다. 안 붙이면 이전 판(아바타+이름)이 깔린 서버에서 이 교체가
+# 건너뛰어져 CSS만 바뀌고 마크업은 그대로 남는다.
+if "ACMEBLOC-MOBILE-USER-V2" not in content:
     m2 = re.search(r'(<button[^>]*class="[^"]*mobile-menu-toggle[^"]*"[^>]*>)(.*?)(</button>)', content, re.S)
     if not m2:
         raise SystemExit("mobile-menu-toggle button not found — aborting")
-    inner = ('{{-- ACMEBLOC-MOBILE-USER --}}'
+    inner = ('{{-- ACMEBLOC-MOBILE-USER-V2 --}}'
              '<img class="avatar" src="{{ user()->getAvatar(30) }}" alt="">'
-             '<span class="acmebloc-mobile-username">{{ user()->getShortName(4) }}</span>')
+             "@icon('caret-down')")
     content = content[:m2.start(2)] + inner + content[m2.end(2):]
-    print("toggle button replaced with avatar+name")
+    print("toggle button replaced with avatar+caret")
 
 with open(path, 'w') as f:
     f.write(content)
@@ -1470,7 +1482,7 @@ sudo -u bookstack bash -c "cd $BS && php artisan view:clear"
 > **11번의 톤 통일 CSS가 위 스니펫에 그대로 들어 있다.** 이 패치는 V9 블록을 통째로
 > 교체하므로, 톤 CSS를 같이 싣지 않으면 게시판 색·폰트가 원래대로 돌아간다. 위
 > `<style>`의 뒷부분(`header#header` 이하)이 바로 그 부분이니 **잘라내지 말 것.**
-> 마커는 내용이 바뀔 때마다 올린다(현재 V19). 정규식이 버전 무관하게
+> 마커는 내용이 바뀔 때마다 올린다(현재 V20). 정규식이 버전 무관하게
 > `<!-- MANAGER-NAV -->` ~ `</style>`를 잡으므로, 재실행하면 직전 버전 블록을 찾아
 > 통째로 교체한다.
 
