@@ -1185,7 +1185,7 @@ path = sys.argv[1]
 with open(path) as f:
     content = f.read()
 
-if "MANAGER-NAV-V14" in content:
+if "MANAGER-NAV-V15" in content:
     print("already patched, skipping")
     raise SystemExit(0)
 
@@ -1193,7 +1193,7 @@ m = re.search(r'<!-- MANAGER-NAV(-V\d+)? -->.*?</style>\n', content, re.S)
 if not m:
     raise SystemExit("old MANAGER-NAV block not found — aborting")
 
-snippet = """<!-- MANAGER-NAV-V14 -->
+snippet = """<!-- MANAGER-NAV-V15 -->
 <input type="checkbox" id="acmebloc-nav-toggle" class="acmebloc-nav-toggle" aria-label="메뉴 열기">
 <div class="acmebloc-mobilebar">
     <label for="acmebloc-nav-toggle" class="acmebloc-burger"><span></span><span></span><span></span></label>
@@ -1267,7 +1267,7 @@ snippet = """<!-- MANAGER-NAV-V14 -->
      1뎁스 줄로 올리지 못하는 이유: 그 버튼은 BookStack의 header-mobile-toggle
      컴포넌트에 refs로 묶여 있어 <header> 밖으로 꺼내면 레이어가 열리지 않는다. */
   header#header {
-    display: flex !important; flex-wrap: wrap; align-items: center; gap: 0.5rem;
+    display: flex !important; flex-wrap: nowrap; align-items: center; gap: 0.5rem;
   }
   /* 아바타+이름이 든 줄 — 오른쪽 끝으로 */
   header#header > .flex-container-row { order: 2; flex: 0 0 auto; margin-left: auto; }
@@ -1282,10 +1282,18 @@ snippet = """<!-- MANAGER-NAV-V14 -->
      그 바깥 DIV에 붙어 있다**(실측: #header의 두 번째 자식
      DIV.flex-container-column...hide-under-l). V10에서 .search-box.hide-under-l로
      잡는 바람에 선택자가 빗나가 검색이 끝내 안 떴다. */
+  /* **검색창은 화면이 좁아지는 만큼 계속 줄어들어야 한다.** input에는 브라우저가
+     주는 고유 최소 너비(약 20자)가 있어서, 그냥 width:100%만 주면 그 아래로는
+     안 줄고 대신 프로필이 다음 줄로 밀려난다(465px 부근에서 실제로 그랬다).
+     flex 자식이 고유 크기 밑으로 줄어들려면 경로 전체에 min-width:0이 필요하다.
+     nowrap과 함께 두어 아무리 좁아도 한 줄을 유지한다 — 검색창이 아주 좁아지는
+     건 감수한다(사용자 결정). */
   header#header > .hide-under-l {
-    display: block !important; order: 1; flex: 1 1 auto; min-width: 0;
+    display: block !important; order: 1; flex: 1 1 0; min-width: 0;
   }
-  header#header > .hide-under-l .search-box { width: 100%; }
+  header#header > .hide-under-l .search-box,
+  header#header > .hide-under-l form { width: 100%; min-width: 0; }
+  header#header #header-search-box-input { width: 100%; min-width: 0; }
 }
 
 /* BookStack 원본 헤더는 그대로 두고 톤만 Manager에 맞춘다 (구조/DOM은 안 건드림) */
