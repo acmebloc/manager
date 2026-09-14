@@ -1185,7 +1185,7 @@ path = sys.argv[1]
 with open(path) as f:
     content = f.read()
 
-if "MANAGER-NAV-V13" in content:
+if "MANAGER-NAV-V14" in content:
     print("already patched, skipping")
     raise SystemExit(0)
 
@@ -1193,7 +1193,7 @@ m = re.search(r'<!-- MANAGER-NAV(-V\d+)? -->.*?</style>\n', content, re.S)
 if not m:
     raise SystemExit("old MANAGER-NAV block not found — aborting")
 
-snippet = """<!-- MANAGER-NAV-V13 -->
+snippet = """<!-- MANAGER-NAV-V14 -->
 <input type="checkbox" id="acmebloc-nav-toggle" class="acmebloc-nav-toggle" aria-label="메뉴 열기">
 <div class="acmebloc-mobilebar">
     <label for="acmebloc-nav-toggle" class="acmebloc-burger"><span></span><span></span><span></span></label>
@@ -1260,16 +1260,31 @@ snippet = """<!-- MANAGER-NAV-V13 -->
      ⋮ 토글이 있고 그 안에 설정·즐겨찾기·프로필 보기가 들어 있다. */
   .acmebloc-header-shelves { display: none !important; }
 
-  /* **그리드를 끈다.** #header는 class="... grid"라 자식들이 한 줄에 칸을 나눠
-     갖는데, 좁은 화면에서는 그 칸이 너무 좁아 링크 글자가 세로로 쪼개진다
-     (V10에서 실제로 그렇게 나왔다). block으로 바꿔 자식들을 세로로 쌓는다. */
-  header#header { display: block !important; }
+  /* **그리드를 끄고 한 줄 배치로 바꾼다.** #header는 class="... grid"라 자식들이
+     칸을 나눠 갖는데, 좁은 화면에서는 칸이 너무 좁아 글자가 세로로 쪼개진다
+     (V10에서 실제로 그렇게 나왔다).
+     배치는 [검색창 .......... 아바타+이름] 한 줄이다(사용자 지정). 프로필을 우리
+     1뎁스 줄로 올리지 못하는 이유: 그 버튼은 BookStack의 header-mobile-toggle
+     컴포넌트에 refs로 묶여 있어 <header> 밖으로 꺼내면 레이어가 열리지 않는다. */
+  header#header {
+    display: flex !important; flex-wrap: wrap; align-items: center; gap: 0.5rem;
+  }
+  /* 아바타+이름이 든 줄 — 오른쪽 끝으로 */
+  header#header > .flex-container-row { order: 2; flex: 0 0 auto; margin-left: auto; }
+  /* 레이어는 헤더 **아래쪽 오른쪽**에 띄운다. 원본은 margin-top으로만 밀어두는데,
+     한 줄 배치로 바꾸면서 프로필 버튼 위에 겹쳐 앉는 경우가 생긴다. 헤더 바닥을
+     기준으로 붙여 항상 아래로 열리게 한다. */
+  header#header > nav.header-links {
+    order: 3; top: 100% !important; margin-top: 0.25rem !important; inset-inline-end: 1rem !important;
+  }
 
   /* 문서 검색을 좁은 화면에서도 보여준다. **hide-under-l은 .search-box가 아니라
      그 바깥 DIV에 붙어 있다**(실측: #header의 두 번째 자식
      DIV.flex-container-column...hide-under-l). V10에서 .search-box.hide-under-l로
      잡는 바람에 선택자가 빗나가 검색이 끝내 안 떴다. */
-  header#header > .hide-under-l { display: block !important; width: 100%; margin-top: 0.5rem; }
+  header#header > .hide-under-l {
+    display: block !important; order: 1; flex: 1 1 auto; min-width: 0;
+  }
   header#header > .hide-under-l .search-box { width: 100%; }
 }
 
