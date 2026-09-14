@@ -23,7 +23,12 @@ function BellIcon() {
 // 헤더의 알림벨 — 담당자 지정/멘션/일정 참조자/마감 임박 이벤트가 쌓인 인앱
 // 알림을 보여준다. react-query 등은 이 프로젝트에 없어 다른 곳(Layout.jsx의
 // 세션 체크 등)과 같은 수동 useEffect + setInterval 폴링으로 구현.
-function NotificationBell() {
+// 모바일 드로어 안에서도 쓴다. inDrawer면 패널을 **위로, 줄 폭에 맞춰** 편다:
+//   - 폭: 기본 w-80(320px)은 드로어(288px)보다 넓어 밖으로 삐져나간다. left/right를
+//     0으로 두되, 그 기준이 되도록 이 컴포넌트는 static이 되고 바깥 줄이 relative를
+//     맡는다(벨 버튼만 감싸면 기준 폭이 28px이 되어 패널이 그만큼 쪼그라든다).
+//   - 방향: 벨이 드로어 **맨 위**에 있으므로 그 줄 바로 아래로 편다(top-full).
+function NotificationBell({ className = 'relative mr-3 flex items-center', inDrawer = false, onUnreadChange }) {
   const [open, setOpen] = useState(false)
   const [items, setItems] = useState([])
   const [unreadCount, setUnreadCount] = useState(0)
@@ -56,6 +61,13 @@ function NotificationBell() {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [open])
+
+  // 안 읽은 개수를 바깥으로도 알린다. 모바일에서는 이 벨이 드로어 안에 있어서
+  // 열기 전까지 배지가 안 보이는데, 햄버거에 점으로 대신 표시하기 위해서다.
+  // 요청을 새로 만들지 않고 이미 폴링 중인 값을 그대로 흘려보낸다.
+  useEffect(() => {
+    onUnreadChange?.(unreadCount)
+  }, [unreadCount, onUnreadChange])
 
   const loadList = async () => {
     try {
@@ -97,7 +109,7 @@ function NotificationBell() {
   }
 
   return (
-    <div className="relative mr-3 flex items-center" ref={containerRef}>
+    <div className={className} ref={containerRef}>
       <button
         type="button"
         onClick={toggleOpen}
@@ -112,7 +124,11 @@ function NotificationBell() {
         )}
       </button>
       {open && (
-        <div className="absolute right-0 top-9 z-20 w-80 rounded-md border border-gray-200 bg-white p-3 shadow-lg dark:border-gray-700 dark:bg-gray-800">
+        <div
+          className={`absolute z-20 rounded-md border border-gray-200 bg-white p-3 shadow-lg dark:border-gray-700 dark:bg-gray-800 ${
+            inDrawer ? 'left-2 right-2 top-full mt-1' : 'right-0 top-9 w-80'
+          }`}
+        >
           <div className="mb-2 flex items-center justify-between">
             <p className="text-xs font-medium text-gray-500 dark:text-gray-400">알림</p>
             <button

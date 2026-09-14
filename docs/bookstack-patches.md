@@ -1147,6 +1147,158 @@ sudo -u bookstack bash -c "cd $BS && php artisan view:clear"
 
 ---
 
+## 16. 게시판 모바일 헤더 — 1뎁스를 햄버거+서랍으로, 2뎁스 검색은 노출 (11번 갱신)
+
+Manager가 좁은 화면에서 메뉴를 서랍에 넣도록 바뀌었다([Layout.jsx](../src/components/Layout.jsx)).
+게시판에 주입한 1뎁스 메뉴도 같은 모양이어야 한다.
+
+**JS를 쓸 수 없다.** BookStack의 CSP가 nonce 없는 인라인 스크립트를 막는다(11번의
+시행착오 기록 참고). 그래서 서랍은 **체크박스 + CSS만으로** 만든다 — 숨긴
+체크박스를 라벨(햄버거)로 토글하고 `:checked ~` 로 서랍과 덮개를 연다. 페이지를
+이동하면 문서가 새로 로드되므로 서랍은 저절로 닫힌 상태로 시작한다.
+
+**1뎁스에는 검색도 프로필도 넣지 않는다.** 2뎁스(BookStack 원본 헤더)에 이미 둘 다
+있어서, 넣으면 한 화면에 검색창이 둘, 프로필이 둘이 된다. 특히 프로필은 **생김새만
+비슷하고 기능이 다르다** — Manager 쪽은 누를 수 없는 표시 전용이고, BookStack 쪽은
+눌러서 여는 드롭다운이다. 기능이 있는 쪽만 남긴다. 데스크톱도 원래 그렇게 되어 있어
+모바일이 그 구조를 그대로 따르는 것이다.
+
+**2뎁스 검색창은 모바일에서 보이게 되돌린다.** BookStack 원본이 `hide-under-l`로
+좁은 화면에서 검색을 숨기는데, 게시판에서 문서 검색은 자주 쓰는 기능이라 살린다.
+공간·문서함·설정·프로필은 BookStack 자체 토글(`.mobile-menu-toggle`) 안에 그대로
+둔다 — 그건 BookStack 번들 JS라 CSP에 걸리지 않고, 우리가 복제하지 않으므로
+업그레이드로 항목이 바뀌어도 따라갈 게 없다.
+
+```bash
+BS=/var/www/bookstack/app
+PATCH="$BS/themes/acmebloc/layouts/parts/header.blade.php"
+
+sudo python3 - "$PATCH" <<'PYEOF'
+import re, sys
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+
+if "MANAGER-NAV-V10" in content:
+    print("already patched, skipping")
+    raise SystemExit(0)
+
+m = re.search(r'<!-- MANAGER-NAV(-V\d+)? -->.*?</style>\n', content, re.S)
+if not m:
+    raise SystemExit("old MANAGER-NAV block not found — aborting")
+
+snippet = """<!-- MANAGER-NAV-V10 -->
+<input type="checkbox" id="acmebloc-nav-toggle" class="acmebloc-nav-toggle" aria-label="메뉴 열기">
+<div class="acmebloc-mobilebar">
+    <label for="acmebloc-nav-toggle" class="acmebloc-burger"><span></span><span></span><span></span></label>
+    <span class="acmebloc-brand">Manager</span>
+</div>
+<label for="acmebloc-nav-toggle" class="acmebloc-nav-backdrop"></label>
+<nav class="acmebloc-topnav" aria-label="Manager 메뉴">
+    <a href="/dashboard">홈</a>
+    <a href="/projects">프로젝트</a>
+    <a href="/tasks">일감</a>
+    <a href="/schedule">일정</a>
+    <a href="/board" class="active">게시판</a>
+    <a href="/mypage">마이페이지</a>
+</nav>
+<style>
+.acmebloc-nav-toggle { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.acmebloc-mobilebar, .acmebloc-nav-backdrop { display: none; }
+.acmebloc-topnav { display: flex; align-items: center; gap: 0.25rem; border-bottom: 1px solid #e5e7eb; padding: 0 1rem; background: #fff; }
+.acmebloc-topnav a { display: inline-block; padding: 0.75rem 1rem; font-size: 0.875rem; line-height: 1.25rem; font-weight: 500; color: #6b7280; text-decoration: none; border-bottom: 2px solid transparent; }
+.acmebloc-topnav a:hover { color: #111827; }
+.acmebloc-topnav a.active { color: #4f46e5; border-bottom-color: #4f46e5; }
+
+@media (max-width: 767px) {
+  .acmebloc-mobilebar { display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 1rem; border-bottom: 1px solid #e5e7eb; background: #fff; }
+  .acmebloc-burger { display: inline-flex; flex-direction: column; justify-content: center; gap: 4px; width: 36px; height: 36px; padding: 8px; cursor: pointer; }
+  .acmebloc-burger span { display: block; height: 2px; background: #4b5563; border-radius: 1px; }
+  .acmebloc-nav-toggle:focus-visible + .acmebloc-mobilebar .acmebloc-burger { outline: 2px solid #4f46e5; outline-offset: 2px; }
+  .acmebloc-brand { font-size: 1rem; font-weight: 600; color: #111827; }
+
+  .acmebloc-topnav {
+    position: fixed; top: 0; bottom: 0; left: 0; z-index: 60;
+    width: 18rem; max-width: 85vw;
+    flex-direction: column; align-items: stretch; gap: 0;
+    padding: 0.5rem 0; border-bottom: none; border-right: 1px solid #e5e7eb;
+    overflow-y: auto; transform: translateX(-100%); visibility: hidden;
+    transition: transform 0.2s ease;
+  }
+  .acmebloc-topnav a { padding: 0.75rem 1rem; border-bottom: none; border-left: 4px solid transparent; }
+  .acmebloc-topnav a.active { border-bottom-color: transparent; border-left-color: #4f46e5; background: #eef2ff; }
+
+  .acmebloc-nav-backdrop { display: block; position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 50; background: rgba(0,0,0,0.4); opacity: 0; pointer-events: none; transition: opacity 0.2s ease; }
+
+  .acmebloc-nav-toggle:checked ~ .acmebloc-topnav { transform: none; visibility: visible; }
+  .acmebloc-nav-toggle:checked ~ .acmebloc-nav-backdrop { opacity: 1; pointer-events: auto; }
+
+  /* 2뎁스(BookStack 원본)에서만 검색을 보여준다 — 원본은 hide-under-l로 좁은
+     화면에서 검색을 숨기는데, 게시판에서 문서 검색은 자주 쓰므로 되살린다.
+     한 줄을 통째로 쓰게 해서 데스크톱용 칸에 끼어 찌그러지지 않게 한다. */
+  header#header .search-box.hide-under-l { display: block !important; grid-column: 1 / -1 !important; margin: 0.5rem 0 !important; }
+}
+
+/* BookStack 원본 헤더는 그대로 두고 톤만 Manager에 맞춘다 (구조/DOM은 안 건드림) */
+header#header {
+  background: #f9fafb !important;
+  border-bottom: 1px solid #e5e7eb !important;
+  box-shadow: none !important;
+}
+header#header, header#header * {
+  font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji" !important;
+}
+.header-links a { color: #4f46e5 !important; text-decoration: none !important; }
+.header-links a:hover { text-decoration: underline !important; }
+/* 공간/문서함은 12번에서 로고 자리(첫 번째 flex 그룹)로 실제 이동시킨다 — 그 그룹을
+   게시판 메뉴 칸 아래로 정렬 */
+.acmebloc-header-shelves { display: flex; align-items: center; gap: 0.75rem; margin-left: 210px; }
+.acmebloc-header-shelves a { display: inline-flex; align-items: center; gap: 0; margin-right: 15px; color: #4f46e5; text-decoration: none; font-size: 0.875rem; }
+.acmebloc-header-shelves a:hover { text-decoration: underline; }
+/* 15번 — 공간/문서함/설정에 현재 보고 있는 페이지 기준 활성 표시 (active 클래스는
+   header-links-shelves.blade.php / header-links.blade.php에서 request()->is()로 부여) */
+.header-links a.active, .acmebloc-header-shelves a.active {
+  font-weight: 700 !important;
+  border-bottom: 2px solid #4f46e5 !important;
+}
+#header-search-box-input {
+  background: #fff !important; border: 1px solid #d1d5db !important; color: #111827 !important;
+  border-radius: 0.375rem !important; box-shadow: none !important;
+}
+#header-search-box-input::placeholder { color: #9ca3af !important; }
+#header-search-box-input:focus {
+  outline: none !important; border-color: #4f46e5 !important; box-shadow: 0 0 0 1px #4f46e5 !important;
+}
+#header-search-box-button { color: #6b7280 !important; }
+.dropdown-container .user-name { color: #4f46e5 !important; }
+</style>
+"""
+
+content = content[:m.start()] + snippet + content[m.end():]
+with open(path, 'w') as f:
+    f.write(content)
+print("patched")
+PYEOF
+
+sudo chown -R bookstack:bookstack $BS/themes/acmebloc
+sudo -u bookstack bash -c "cd $BS && php artisan view:clear"
+```
+
+> **11번의 톤 통일 CSS가 위 스니펫에 그대로 들어 있다.** 이 패치는 V9 블록을 통째로
+> 교체하므로, 톤 CSS를 같이 싣지 않으면 게시판 색·폰트가 원래대로 돌아간다. 위
+> `<style>`의 뒷부분(`header#header` 이하)이 바로 그 부분이니 **잘라내지 말 것.**
+> 마커를 V10으로 올렸으므로 재실행하면 V9 블록을 찾아 교체한다.
+
+### 적용 후 확인
+
+1. 휴대폰 폭(390px)에서 1뎁스가 `[≡] Manager` 한 줄인지, 햄버거를 누르면 왼쪽에서
+   메뉴 6개가 나오는지.
+2. 서랍 바깥(덮개)을 누르면 닫히는지.
+3. 2뎁스에 **문서 검색창이 보이는지** — 이 부분이 가장 불확실하다. BookStack 헤더는
+   CSS 그리드인데 검색창이 데스크톱용 칸에 끼어들어 배치가 어그러질 수 있다.
+   어그러지면 `header#header .search-box` 의 `grid-column` 값을 화면 보고 조정한다.
+4. 데스크톱(1280px)에서 1뎁스·2뎁스가 **예전과 똑같은지**(회귀).
+
 ## 업그레이드 후 점검
 
 BookStack을 `git pull`로 올린 뒤에는 이 순서로 확인한다.
