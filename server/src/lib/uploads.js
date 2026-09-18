@@ -1,12 +1,32 @@
 import crypto from 'node:crypto'
+import { mkdirSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import multer from 'multer'
 
 // Overridable for local/dev testing — production points this at
-// /var/www/manager/uploads/tasks (nginx does not serve this directory;
+// /var/www/manager/uploads/tasks (Apache does not serve this directory;
 // downloads are streamed through Express so permission checks apply).
 export const TASK_UPLOAD_DIR = process.env.TASK_UPLOAD_DIR || '/var/www/manager/uploads/tasks'
+
+// multer는 destination 디렉터리를 만들어주지 않는다 — 없으면 업로드마다 ENOENT로
+// 실패한다. 그런데 이 디렉터리는 배포 디렉터리(/var/www/manager/app)의 형제라
+// git pull로도, npm ci로도 생기지 않는다. 실제로 운영 서버의 것은 손으로 만든
+// 것이었고 DEPLOY.md에도 절차가 없었다(§14에서 문서화했다). 서버를 다시 세울 때
+// 첨부만 조용히 깨지는 걸 막으려고 여기서 보장한다 — oidcKeys.js가 keys/를
+// 다루는 방식과 같다.
+//
+// **던지지 않는다.** TASK_UPLOAD_DIR을 지정하지 않은 로컬 개발 머신에서는 기본
+// 경로(/var/www/...)를 만들 권한이 없는 게 정상인데, 여기서 던지면 첨부와 무관한
+// 작업까지 서버가 아예 안 뜬다. 경고만 남기고, 실제 업로드 시점에 multer가
+// 평소대로 에러를 돌려준다.
+try {
+  mkdirSync(TASK_UPLOAD_DIR, { recursive: true })
+} catch (err) {
+  console.warn(
+    `[uploads] 첨부 저장 디렉터리를 만들지 못했습니다 (${TASK_UPLOAD_DIR}): ${err.message} — 첨부 업로드가 실패합니다. 로컬 개발이라면 TASK_UPLOAD_DIR을 쓰기 가능한 경로로 지정하세요`,
+  )
+}
 
 export const MAX_ATTACHMENT_SIZE = 20 * 1024 * 1024
 export const MAX_ATTACHMENTS_PER_TASK = 10
