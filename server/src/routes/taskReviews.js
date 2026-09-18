@@ -3,8 +3,10 @@ import path from 'node:path'
 import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
+import { loadTask } from '../lib/loadTask.js'
 import { requireProjectRole } from '../lib/projectAccess.js'
 import { assignReviewRounds } from '../lib/taskReview.js'
+import { isProjectAdmin } from '../lib/taskPermissions.js'
 import { deleteAttachmentFile, TASK_UPLOAD_DIR, taskUpload } from '../lib/uploads.js'
 
 // Mounted at /api/projects/:projectId/tasks/:taskId/reviews — 검수 이력 조회와
@@ -17,18 +19,6 @@ const userSelect = { id: true, name: true, email: true, picture: true, deactivat
 // 응답에 실제로 나가는 것만 — mimeType은 다운로드 라우트가 원본 행을 다시
 // 읽어서 쓰고(스트리밍 헤더), createdAt은 이력 자체의 시각으로 충분하다.
 const outputSelect = { id: true, fileName: true, size: true, uploadedById: true }
-
-async function loadTask(req, res) {
-  const task = await prisma.task.findFirst({
-    where: { id: req.params.taskId, projectId: req.params.projectId },
-    select: { id: true, status: true },
-  })
-  if (!task) {
-    res.status(404).json({ error: 'Not found' })
-    return null
-  }
-  return task
-}
 
 async function loadReview(req, res, taskId) {
   const review = await prisma.taskReview.findFirst({
@@ -89,15 +79,17 @@ router.get('/', requireProjectRole('member'), async (req, res) => {
         round: review.round,
         createdAt: review.createdAt,
         author: review.author ? decryptUser(review.author) : null,
-        // canDelete/canUpload는 "올린 사람만 지울 수 있다"(사용자 확인)와 완료
-        // 잠금을 합친 결과다 — 라우트 쪽 검증과 같은 조건이어야 버튼을 눌렀을 때
-        // 403이 나는 일이 없다.
+        // canDelete/canUpload는 삭제·첨부 라우트의 검증과 **같은 조건**이어야
+        // 한다 — 다르면 버튼이 있는데 누르면 403이거나, 권한이 있는데 버튼이
+        // 안 보인다. 삭제는 "올린 사람 또는 PM·사이트어드민", 첨부는 "이력을
+        // 남긴 사람"이고, 둘 다 완료 잠금이 우선한다.
         output: output
           ? {
               id: output.id,
               fileName: output.fileName,
               size: output.size,
-              canDelete: output.uploadedById === req.user.id && !locked,
+              canDelete:
+                (output.uploadedById === req.user.id || isProjectAdmin(req.projectAccess)) && !locked,
             }
           : null,
         canUpload: review.kind === 'request' && !output && review.authorId === req.user.id && !locked,
@@ -118,9 +110,9 @@ router.post('/:reviewId/attachment', requireProjectRole('member'), async (req, r
   if (review.kind !== 'request') {
     return res.status(400).json({ error: '산출물은 검수요청 이력에만 첨부할 수 있습니다' })
   }
-  // 이력을 남긴 사람(=산출물을 낸 담당자)만 그 이력의 파일을 올리고 지울 수
-  // 있다 — 담당자가 교체되거나 프로젝트에서 빠지면 그 파일은 아무도 못 지우게
-  // 되는데, 그 트레이드오프는 확인된 사항이다(spec 3장).
+  // 이력을 남긴 사람(=산출물을 낸 담당자)만 그 이력의 파일을 올릴 수 있다.
+  // 삭제는 다르다 — 담당자가 교체되거나 프로젝트에서 빠지면 아무도 못 지우는
+  // 상태가 돼서, 아래 DELETE에는 PM·사이트어드민을 열어뒀다(spec 3장).
   if (review.authorId !== req.user.id) {
     return res.status(403).json({ error: '검수 이력을 등록한 사람만 산출물을 첨부할 수 있습니다' })
   }
@@ -198,8 +190,15 @@ router.delete('/:reviewId/attachment/:id', requireProjectRole('member'), async (
     where: { id: req.params.id, taskId: task.id, reviewId: review.id },
   })
   if (!attachment) return res.status(404).json({ error: 'Not found' })
-  if (attachment.uploadedById !== req.user.id) {
-    return res.status(403).json({ error: '산출물 파일은 등록한 사람만 삭제할 수 있습니다' })
+  // 올린 사람, 그리고 PM·사이트어드민. 원래는 올린 사람 하나뿐이라, 담당자가
+  // 교체되거나 프로젝트에서 빠지면 그 파일을 아무도 못 지우는 상태가 됐다.
+  // isProjectAdmin 하나로 둘 다 덮인다 — getProjectAccess가 사이트어드민을 합성
+  // pm 역할로 접어주기 때문이다(taskPermissions.js 주석).
+  //
+  // 첨부(POST)는 넓히지 않았다. 산출물을 **내는** 건 검수를 요청한 본인의 행위라
+  // 대신 올릴 사람이 없지만, 잘못 올라간 파일을 치우는 건 관리 행위다.
+  if (attachment.uploadedById !== req.user.id && !isProjectAdmin(req.projectAccess)) {
+    return res.status(403).json({ error: '산출물 파일은 등록한 사람 또는 PM만 삭제할 수 있습니다' })
   }
 
   // 한 번 켜지면 다시 꺼지지 않는다 — 지웠다 다시 올리는 횟수는 세지 않고,

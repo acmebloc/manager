@@ -12,15 +12,27 @@ function formatDate(value) {
   return new Date(value).toLocaleDateString('ko-KR')
 }
 
-const shortcutLinkClassName =
-  'inline-flex items-center gap-1 text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400'
+const shortcutBaseClassName = 'inline-flex items-center gap-1 text-sm font-medium'
+const shortcutLinkClassName = `${shortcutBaseClassName} text-indigo-600 hover:underline dark:text-indigo-400`
+// 갈 곳이 없을 때. 링크 색을 빼고 커서도 기본으로 둔다 — 눌러도 아무 일이 없는
+// 걸 누르기 전에 알 수 있어야 한다.
+const shortcutDisabledClassName = `${shortcutBaseClassName} cursor-default text-gray-400 dark:text-gray-500`
 
 // 버튼이 아니라 링크로 보이게 — MarkdownContent.jsx의 본문 링크와 같은 색/밑줄
-// 규칙을 재사용. 세 바로가기는 전부 같은 모양·상호작용으로 만든다 — 게시판은
-// BookStack 프로젝트별 연동 전이라 대상 URL만 없을 뿐, 별도 비활성 스타일을
-// 두지 않는다 (docs/project-menu-upgrade-spec.md 4.6).
-function ShortcutLink({ to, label, external = false }) {
-  if (!to) return <a className={shortcutLinkClassName}>{label}</a>
+// 규칙을 재사용 (docs/project-menu-upgrade-spec.md 4.6).
+//
+// to가 없을 때 예전에는 href 없는 <a>를 링크 색 그대로 렌더했다. 그래서 눌러도
+// 아무 일이 없는데 보기엔 멀쩡한 링크였고, 이유도 알 수 없었다. 지금은 흐리게
+// 표시하고 reason을 툴팁으로 준다. <a>가 아니라 <span>인 이유는 href 없는 <a>가
+// 어차피 키보드 포커스를 받지 못해 링크 역할을 못 하기 때문이다.
+function ShortcutLink({ to, label, external = false, reason }) {
+  if (!to) {
+    return (
+      <span className={shortcutDisabledClassName} aria-disabled="true" title={reason}>
+        {label}
+      </span>
+    )
+  }
   if (external) {
     return (
       <a href={to} className={shortcutLinkClassName}>
@@ -379,14 +391,23 @@ function ProjectDetailPage() {
                   일정으로 조용히 대체돼버린다 — 링크 자체를 비활성화해 이 경로로
                   들어가는 걸 막는다(직접 URL 접근은 여전히 가능, 각 페이지 쪽
                   방어는 별도). */}
-              <ShortcutLink to={project.archivedAt ? null : `/tasks?projectId=${id}`} label="일감" />
+              <ShortcutLink
+                to={project.archivedAt ? null : `/tasks?projectId=${id}`}
+                label="일감"
+                reason="보관된 프로젝트는 일감 목록으로 이동할 수 없습니다"
+              />
               <span aria-hidden="true">·</span>
-              <ShortcutLink to={project.archivedAt ? null : `/schedule?projectId=${id}`} label="일정" />
+              <ShortcutLink
+                to={project.archivedAt ? null : `/schedule?projectId=${id}`}
+                label="일정"
+                reason="보관된 프로젝트는 일정으로 이동할 수 없습니다"
+              />
               <span aria-hidden="true">·</span>
               <ShortcutLink
                 to={project.bookstackShelfSlug ? `/board/shelves/${project.bookstackShelfSlug}` : null}
                 label="게시판"
                 external
+                reason="이 프로젝트의 게시판 공간이 아직 만들어지지 않았습니다"
               />
               <span aria-hidden="true">·</span>
               <ProjectExportMenu projectId={id} projectName={project.name} />
