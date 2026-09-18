@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../db.js'
+import { loadTask } from '../lib/loadTask.js'
 import { requireProjectRole } from '../lib/projectAccess.js'
 import { canEditTaskFields } from '../lib/taskPermissions.js'
 
@@ -14,20 +15,6 @@ const router = Router({ mergeParams: true })
 function checklistDenyMessage(task) {
   if (task.status === 'done') return '완료된 일감은 체크리스트를 변경할 수 없습니다'
   return 'Forbidden'
-}
-
-async function loadTask(req, res) {
-  const task = await prisma.task.findFirst({
-    where: { id: req.params.taskId, projectId: req.params.projectId },
-    // status와 reviewerId는 권한 판정(canEditTaskFields)에 필요하다 — 완료
-    // 잠금과 검수자 여부를 여기서 같이 본다.
-    select: { id: true, status: true, createdById: true, assigneeId: true, reviewerId: true },
-  })
-  if (!task) {
-    res.status(404).json({ error: 'Not found' })
-    return null
-  }
-  return task
 }
 
 router.get('/', requireProjectRole('member'), async (req, res) => {

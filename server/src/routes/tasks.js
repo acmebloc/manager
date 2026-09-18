@@ -162,11 +162,11 @@ async function loadImportCandidateMembers(projectId) {
 // drop anything else, same "invalid input just doesn't apply" pattern as
 // assignee/mention validation elsewhere in this file/taskComments.js. Also
 // drops the task's own id, since a self-link is never meaningful.
-async function sameProjectTaskIds(projectId, taskId, ids) {
+async function sameProjectTaskIds(projectId, taskId, ids, db = prisma) {
   if (!Array.isArray(ids) || ids.length === 0) return []
   const candidates = ids.filter((id) => id !== taskId)
   if (candidates.length === 0) return []
-  const found = await prisma.task.findMany({
+  const found = await db.task.findMany({
     where: { id: { in: candidates }, projectId },
     select: { id: true },
   })
@@ -191,19 +191,24 @@ async function sameProjectTaskIds(projectId, taskId, ids) {
 // Delete+recreate runs inside one transaction so a save never leaves links in
 // a transiently-empty (or partially applied) state if a later step in the
 // same request fails.
-async function applyTaskLinks(projectId, taskId, { relatedTaskIds, blockedByTaskIds }) {
+//
+// tx를 넘기면 그 트랜잭션 안에서 쓴다 — 그러면 자체 $transaction을 열지 않는다
+// (이미 열린 트랜잭션 안에서 또 열 수 없다). PATCH 경로는 검사와 쓰기를 한
+// 트랜잭션에 묶으려고 이 형태로 부른다(withProjectRelationLock 참고).
+async function applyTaskLinks(projectId, taskId, { relatedTaskIds, blockedByTaskIds }, tx = null) {
+  const db = tx ?? prisma
   const operations = []
 
   if (relatedTaskIds !== undefined) {
-    const ids = await sameProjectTaskIds(projectId, taskId, relatedTaskIds)
-    operations.push(
-      prisma.taskLink.deleteMany({
+    const ids = await sameProjectTaskIds(projectId, taskId, relatedTaskIds, db)
+    operations.push(() =>
+      db.taskLink.deleteMany({
         where: { type: 'related', OR: [{ fromTaskId: taskId }, { toTaskId: taskId }] },
       }),
     )
     if (ids.length > 0) {
-      operations.push(
-        prisma.taskLink.createMany({
+      operations.push(() =>
+        db.taskLink.createMany({
           data: ids.map((toTaskId) => ({ fromTaskId: taskId, toTaskId, type: 'related' })),
         }),
       )
@@ -211,18 +216,24 @@ async function applyTaskLinks(projectId, taskId, { relatedTaskIds, blockedByTask
   }
 
   if (blockedByTaskIds !== undefined) {
-    const ids = await sameProjectTaskIds(projectId, taskId, blockedByTaskIds)
-    operations.push(prisma.taskLink.deleteMany({ where: { type: 'blocks', toTaskId: taskId } }))
+    const ids = await sameProjectTaskIds(projectId, taskId, blockedByTaskIds, db)
+    operations.push(() => db.taskLink.deleteMany({ where: { type: 'blocks', toTaskId: taskId } }))
     if (ids.length > 0) {
-      operations.push(
-        prisma.taskLink.createMany({
+      operations.push(() =>
+        db.taskLink.createMany({
           data: ids.map((fromTaskId) => ({ fromTaskId, toTaskId: taskId, type: 'blocks' })),
         }),
       )
     }
   }
 
-  if (operations.length > 0) await prisma.$transaction(operations)
+  if (operations.length === 0) return
+  if (tx) {
+    // 이미 트랜잭션 안이다 — 순서대로 실행하면 그대로 원자적이다.
+    for (const run of operations) await run()
+    return
+  }
+  await prisma.$transaction(operations.map((run) => run()))
 }
 
 // 선행 목록을 교체할 때 순환이 생기는지 검사한다 — 순환이 생기면 서로 영원히
@@ -250,11 +261,16 @@ async function assertNoBlockingCycle(projectId, taskId, blockedByTaskIds, db = p
 // 하위 작업을 갖고 있으면(부모이면서 동시에 자식이 되므로) 거부한다.
 // previousParentId와 같으면(안 바뀌는 경우) 검사를 건너뛴다. taskId가 없으면
 // (생성 시점) 자기 자식 개수 검사는 스킵 — 새 일감은 아직 자식이 있을 수 없다.
-async function assertValidParent(projectId, taskId, parentTaskId, previousParentId) {
+//
+// db로 트랜잭션 클라이언트를 넘기면 그 트랜잭션 안에서 읽는다
+// (assertNoBlockingCycle과 같은 규약). 검사와 쓰기가 다른 트랜잭션에 있으면
+// 동시에 들어온 두 요청이 각각 "조부모 없음"을 확인한 뒤 둘 다 저장해서 2단
+// 계층을 만들 수 있다 — PATCH 경로는 withProjectRelationLock 안에서 부른다.
+async function assertValidParent(projectId, taskId, parentTaskId, previousParentId, db = prisma) {
   if (!parentTaskId) return null
   if (parentTaskId === previousParentId) return null
   if (parentTaskId === taskId) return '자기 자신을 상위 일감으로 지정할 수 없습니다'
-  const candidate = await prisma.task.findFirst({
+  const candidate = await db.task.findFirst({
     where: { id: parentTaskId, projectId },
     select: { parentTaskId: true },
   })
@@ -267,7 +283,7 @@ async function assertValidParent(projectId, taskId, parentTaskId, previousParent
   // 사실 지금 보고 있는 화면의 일감(parentTaskId)을 가리키게 되어 헷갈린다.
   if (candidate.parentTaskId) return '상위 일감으로 지정하려는 일감은 이미 다른 일감의 하위 작업으로 등록되어 있어 상위 일감이 될 수 없습니다'
   if (taskId) {
-    const ownChildrenCount = await prisma.task.count({ where: { parentTaskId: taskId } })
+    const ownChildrenCount = await db.task.count({ where: { parentTaskId: taskId } })
     if (ownChildrenCount > 0) return '하위 작업으로 지정하려는 일감에 이미 하위 작업이 있어 다른 일감의 하위 작업이 될 수 없습니다'
   }
   return null
@@ -696,10 +712,12 @@ async function loadSuccessorForLinkEdit(req, res) {
 // 프로젝트의 작업을 기다리게 만들지 않는다. 임계구역 안의 조회는 전부 tx로
 // 해야 한다 — 공용 클라이언트로 읽으면 다른 커넥션이라 락 밖에서 읽는 셈이다.
 //
-// PATCH /:id의 관계 교체에는 같은 경합이 남아 있다(이 작업 전부터 있던 것).
-// 거기까지 이 락으로 감싸면 프로젝트 안의 일감 수정이 전부 직렬화돼서, 막으려는
-// 문제보다 부하 영향이 크다. 만들어지는 상태도 되돌릴 수 없는 종류는 아니다 —
-// 제거 경로에는 순환 검사가 없어 화면에서 어느 쪽이든 지울 수 있다.
+// PATCH /:id의 관계 교체도 이 락을 쓴다 — 단, **관계 필드를 실제로 보낸 요청만**
+// 탄다(touchesRelations). 한동안 PATCH를 빼놨던 이유는 "프로젝트 안의 일감 수정이
+// 전부 직렬화된다"였는데, 조건을 걸면 그 부담이 없어진다: 칸반 드래그(상태만)나
+// 제목·담당자 수정은 락을 잡지 않고 예전 경로 그대로 간다. 상위 일감 검증
+// (assertValidParent)도 같은 임계구역 안으로 들어와서, 동시 요청 두 개가 각각
+// "조부모 없음"을 확인한 뒤 2단 계층을 만들던 창도 같이 닫혔다.
 // **락을 기다리는 시간도 트랜잭션 제한에 포함된다.** 제한을 넘기면 Prisma가
 // P2028을 던지는데, 전역 에러 핸들러는 무엇이 오든 500으로 내보내므로 "잠시 후
 // 다시 시도" 상황이 서버 오류로 보인다. 그래서 제한을 기본 5초보다 넉넉히 두고,
@@ -1001,27 +1019,12 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
     return res.status(400).json({ error: '검수자를 지정해주세요' })
   }
 
-  if (parentTaskId !== undefined) {
-    const parentProblem = await assertValidParent(
-      req.params.projectId,
-      req.params.id,
-      parentTaskId,
-      existing.parentTaskId,
-    )
-    if (parentProblem) return res.status(400).json({ error: parentProblem })
-  }
-
-  const exclusivityProblem = await assertRelationExclusivity(
-    req.params.id,
-    { parentTaskId, relatedTaskIds, blockedByTaskIds },
-    existing,
-  )
-  if (exclusivityProblem) return res.status(400).json({ error: exclusivityProblem })
-
-  if (blockedByTaskIds !== undefined) {
-    const cycleProblem = await assertNoBlockingCycle(req.params.projectId, req.params.id, blockedByTaskIds)
-    if (cycleProblem) return res.status(400).json({ error: cycleProblem })
-  }
+  // 관계(상위/연결/선행) 검증은 아래 쓰기와 같은 트랜잭션·같은 락 안에서 한다.
+  // 여기서 미리 하지 않는 이유는 그게 정확히 예전의 경합이었기 때문이다 — 검사와
+  // 쓰기 사이에 await가 여러 번 있어서, 동시에 들어온 두 요청이 각각 깨끗하다고
+  // 판정한 뒤 둘 다 저장할 수 있었다.
+  const touchesRelations =
+    parentTaskId !== undefined || relatedTaskIds !== undefined || blockedByTaskIds !== undefined
 
   const data = {
     ...(title !== undefined && { title }),
@@ -1044,28 +1047,72 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
   // 검수중인 일감" 또는 "상태는 그대로인데 이력만 늘어난 일감"이 된다.
   // where에 현재 상태를 함께 걸어, 이 핸들러가 판정한 뒤 다른 사람이 먼저
   // 상태를 바꿔버린 경우(칸반을 띄워둔 채 새로고침 안 한 화면)를 걸러낸다.
+  const taskUpdateArgs = {
+    where: wantsStatusChange ? { id: req.params.id, status: existing.status } : { id: req.params.id },
+    data,
+    include: taskWriteInclude,
+  }
+  const reviewCreateArgs = reviewData
+    ? { data: { taskId: req.params.id, authorId: req.user.id, ...reviewData } }
+    : null
+
   let task
   let createdReview
   try {
-    const operations = [
-      prisma.task.update({
-        where: wantsStatusChange
-          ? { id: req.params.id, status: existing.status }
-          : { id: req.params.id },
-        data,
-        include: taskWriteInclude,
-      }),
-    ]
-    if (reviewData) {
-      operations.push(
-        prisma.taskReview.create({
-          data: { taskId: req.params.id, authorId: req.user.id, ...reviewData },
-        }),
-      )
+    if (touchesRelations) {
+      // 관계를 실제로 건드리는 요청만 프로젝트 락을 탄다. 예전에 이 경합을 그냥
+      // 두기로 했던 이유가 "프로젝트 안의 일감 수정이 전부 직렬화된다"였는데,
+      // 조건을 걸면 그 부담이 사라진다 — 칸반 드래그(상태만)나 제목 수정 같은
+      // 대부분의 PATCH는 아래 else로 빠져 예전과 똑같이 동작한다.
+      const outcome = await withProjectRelationLock(req.params.projectId, async (tx) => {
+        if (parentTaskId !== undefined) {
+          const parentProblem = await assertValidParent(
+            req.params.projectId,
+            req.params.id,
+            parentTaskId,
+            existing.parentTaskId,
+            tx,
+          )
+          if (parentProblem) return { problem: parentProblem }
+        }
+
+        const exclusivityProblem = await assertRelationExclusivity(
+          req.params.id,
+          { parentTaskId, relatedTaskIds, blockedByTaskIds },
+          existing,
+          tx,
+        )
+        if (exclusivityProblem) return { problem: exclusivityProblem }
+
+        if (blockedByTaskIds !== undefined) {
+          const cycleProblem = await assertNoBlockingCycle(
+            req.params.projectId,
+            req.params.id,
+            blockedByTaskIds,
+            tx,
+          )
+          if (cycleProblem) return { problem: cycleProblem }
+        }
+
+        const updatedTask = await tx.task.update(taskUpdateArgs)
+        const review = reviewCreateArgs ? await tx.taskReview.create(reviewCreateArgs) : undefined
+        await applyTaskLinks(req.params.projectId, updatedTask.id, { relatedTaskIds, blockedByTaskIds }, tx)
+        return { task: updatedTask, createdReview: review }
+      })
+
+      if (outcome === LOCK_BUSY) {
+        return res.status(409).json({ error: '다른 관계 변경이 처리 중입니다. 잠시 후 다시 시도해주세요' })
+      }
+      if (outcome.problem) return res.status(400).json({ error: outcome.problem })
+      task = outcome.task
+      createdReview = outcome.createdReview
+    } else {
+      const operations = [prisma.task.update(taskUpdateArgs)]
+      if (reviewCreateArgs) operations.push(prisma.taskReview.create(reviewCreateArgs))
+      const results = await prisma.$transaction(operations)
+      task = results[0]
+      createdReview = results[1]
     }
-    const results = await prisma.$transaction(operations)
-    task = results[0]
-    createdReview = results[1]
   } catch (err) {
     if (err.code === 'P2025') {
       return res.status(409).json({ error: '이미 다른 사람이 처리했습니다. 새로고침 후 다시 시도해주세요' })
@@ -1074,7 +1121,6 @@ router.patch('/:id', requireProjectRole('member'), async (req, res) => {
     return res.status(500).json({ error: '저장 중 문제가 발생했습니다' })
   }
 
-  await applyTaskLinks(req.params.projectId, task.id, { relatedTaskIds, blockedByTaskIds })
   await applyTaskFollowers(req.params.projectId, task.id, followerIds)
   await autoFollowPmOnUrgent(req.params.projectId, task.id, {
     previousGrade: existing.grade,

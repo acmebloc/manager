@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
+import { loadTask as loadTaskRow } from '../lib/loadTask.js'
 import { notifyMention } from '../lib/mailer.js'
 import { createNotification } from '../lib/notifications.js'
 import { wantsEmailNotifications } from '../lib/notificationPrefs.js'
@@ -33,16 +34,8 @@ function decryptComment(comment, currentUserId) {
   }
 }
 
-async function loadTask(req, res) {
-  const task = await prisma.task.findFirst({
-    where: { id: req.params.taskId, projectId: req.params.projectId },
-  })
-  if (!task) {
-    res.status(404).json({ error: 'Not found' })
-    return null
-  }
-  return task
-}
+// select: null — 이 라우터는 권한 판정용 필드 말고도 일감 행의 다른 값들을 쓴다.
+const loadTask = (req, res) => loadTaskRow(req, res, { select: null })
 
 // The client already knows exactly who it mentioned (it built the
 // :mention[id] directives), so it sends the resolved ids directly instead

@@ -3,6 +3,7 @@ import path from 'node:path'
 import { Router } from 'express'
 import { prisma } from '../db.js'
 import { decryptUser } from '../lib/fieldCrypto.js'
+import { loadTask as loadTaskRow } from '../lib/loadTask.js'
 import { requireProjectRole } from '../lib/projectAccess.js'
 import { canEditTaskFields } from '../lib/taskPermissions.js'
 import {
@@ -42,16 +43,8 @@ function decryptAttachment(attachment) {
   return { ...attachment, uploadedBy: attachment.uploadedBy ? decryptUser(attachment.uploadedBy) : null }
 }
 
-async function loadTask(req, res) {
-  const task = await prisma.task.findFirst({
-    where: { id: req.params.taskId, projectId: req.params.projectId },
-  })
-  if (!task) {
-    res.status(404).json({ error: 'Not found' })
-    return null
-  }
-  return task
-}
+// select: null — 이 라우터는 권한 판정용 필드 말고도 일감 행의 다른 값들을 쓴다.
+const loadTask = (req, res) => loadTaskRow(req, res, { select: null })
 
 router.get('/', requireProjectRole('member'), async (req, res) => {
   const task = await loadTask(req, res)
