@@ -155,11 +155,17 @@ async function claimProvisioning(projectId) {
 // 프로젝트 생성 직후 fire-and-forget으로 호출 — 절대 await하지 않는다(호출부 응답을
 // BookStack API 왕복 시간에 묶어두지 않기 위해). 공간(Shelf) + 문서함 3개(공지사항/
 // Weekly/자료실) + 프로젝트 전용 역할을 만들고, 지금 이 순간의 멤버 전원에게 그
-// 역할을 붙인다. 도중에 실패하면 여기까지 만들어진 것(문서함 몇 개, 공간 등)은
-// BookStack에 그대로 남는다 — 정리하지 않는다. 재시도(retryProjectSpace)가 다시
-// 실행되면 항상 새로 만들기 때문에, 실패한 절반짜리 리소스가 계속 남는 게 이상적이진
-// 않지만, 프로젝트 생성 자체를 막지 않는 느슨한 결합 쪽을 우선했다 — 정리는 나중에
-// BookStack 관리자 화면에서 수동으로.
+// 역할을 붙인다.
+//
+// 도중에 실패하면 **이번 호출이 만든 것만** 되돌린다(아래 catch). 실패해도 DB에는
+// 아무것도 기록되지 않으므로, 정리하지 않으면 그 리소스를 가리키는 곳이 영영
+// 사라진다 — 게다가 재시도(retryProjectSpace)는 항상 새로 만들기 때문에 재시도를
+// 누를 때마다 공간·문서함·역할이 한 세트씩 쌓인다. 예전에는 이걸 그대로 두고
+// "나중에 BookStack 관리자 화면에서 수동으로"였다.
+//
+// 정리도 실패할 수 있다(애초에 BookStack이 죽어서 여기 온 경우가 대부분이다).
+// 그래서 정리는 best-effort이고 실패는 로그로만 남긴다 — 프로젝트 생성 자체를
+// 막지 않는 느슨한 결합은 그대로다.
 //
 // 반환값은 실제로 이 호출이 선점에 성공해 작업을 실행했는지 여부 — fire-and-forget
 // 호출부는 무시해도 되지만, retryProjectSpace는 이걸로 "이미 다른 시도가 진행
@@ -168,6 +174,12 @@ export async function provisionProjectSpace(projectId) {
   if (!bookstackConfigured()) return { started: false }
   const claimedAt = await claimProvisioning(projectId)
   if (!claimedAt) return { started: false }
+
+  // 이번 호출이 BookStack에 실제로 만든 것. 성공 경로(updated.count === 0)와 실패
+  // 경로(catch)가 둘 다 이걸로 정리하므로 try 밖에 둔다 — deleteProjectSpace가
+  // 기대하는 필드명을 그대로 써서 변환 없이 넘긴다.
+  const created = { bookstackBookIds: [], bookstackShelfId: null, bookstackRoleId: null }
+
   try {
     const project = await prisma.project.findUnique({
       where: { id: projectId },
@@ -179,9 +191,12 @@ export async function provisionProjectSpace(projectId) {
     for (const label of BOOK_NAMES) {
       const book = await createBook(label)
       books.push(book)
+      created.bookstackBookIds.push(book.id)
     }
     const shelf = await createShelf(project.name, books.map((b) => b.id))
+    created.bookstackShelfId = shelf.id
     const role = await createProjectRole(`프로젝트: ${project.name}`)
+    created.bookstackRoleId = role.id
 
     await restrictToRole('bookshelf', shelf.id, role.id)
     for (const book of books) {
@@ -219,11 +234,7 @@ export async function provisionProjectSpace(projectId) {
       },
     })
     if (updated.count === 0) {
-      await deleteProjectSpace({
-        bookstackBookIds: books.map((b) => b.id),
-        bookstackShelfId: shelf.id,
-        bookstackRoleId: role.id,
-      })
+      await deleteProjectSpace(created)
     }
     return { started: true }
   } catch (err) {
@@ -231,12 +242,28 @@ export async function provisionProjectSpace(projectId) {
     // 여기서도 내 클레임일 때만 푼다 — 조건 없이 지우면, 이번 호출이 오래
     // 걸려서 다른 호출이 클레임을 넘겨받은 뒤에 이 catch가 그 클레임을 풀어버려
     // 세 번째 호출까지 동시에 들어올 수 있다(그래서 공간·역할이 중복 생성된다).
+    //
+    // 정리보다 먼저 푼다 — 정리는 실패한 BookStack을 상대로 최대 몇십 초가 걸릴
+    // 수 있는데, 그때까지 사용자에게 에러를 못 보여줄 이유가 없다. 아래 정리는
+    // 이번 호출이 만든 id만 건드리므로, 그 사이에 재시도가 새 세트를 만들어도
+    // 서로 간섭하지 않는다.
     await prisma.project
       .updateMany({
         where: { id: projectId, bookstackProvisioningStartedAt: claimedAt },
         data: { bookstackSyncError: err.message, bookstackProvisioningStartedAt: null },
       })
       .catch(() => {})
+
+    // 실패 지점까지 만들어진 것 되돌리기. DB에 기록된 게 없으니 지금 안 지우면
+    // 가리키는 곳 없는 영구 고아가 된다. deleteProjectSpace는 각 삭제를 개별
+    // catch로 감싸므로 여기서 다시 던지지 않는다.
+    await deleteProjectSpace(created).catch((cleanupErr) =>
+      console.error('[bookstack] provisionProjectSpace cleanup failed', {
+        projectId,
+        created,
+        error: cleanupErr.message,
+      }),
+    )
     return { started: true }
   }
 }
