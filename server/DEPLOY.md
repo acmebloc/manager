@@ -527,7 +527,20 @@ RDS는 자동 백업이 있지만, **DB 백업만으로는 복구되지 않는 �
 | `<app>/server/keys/` | 게시판 로그인만 조용히 깨진다 (6단계 OIDC 서명키 설명 참고) |
 | `<app>/server/.env` | `FIELD_ENCRYPTION_KEY`가 사라지면 사용자 이름·이메일을 **영영** 못 읽는다 (6단계 경고) |
 
-### 14-1. 업로드 디렉터리 확인
+**어디서 실행하는지 구분할 것.** 서버는 백업을 쓰기만 하면 되므로 권한을
+`PutObject` 하나로 조일 건데, 그러면 버킷을 만들거나 정책을 붙이는 일은 **서버에서
+할 수 없다**(AccessDenied). 아래 표대로 나눠서 한다.
+
+| 단계 | 실행 위치 |
+|---|---|
+| 14-1 업로드 디렉터리 | EC2 서버 |
+| 14-2 버킷 생성·설정 | **AWS 콘솔 또는 관리자 자격증명이 있는 머신** |
+| 14-3 IAM 정책 | **AWS 콘솔(IAM)** |
+| 14-4 cron 등록 | EC2 서버 |
+| 14-5 RDS 백업 확인 | 관리자 자격증명이 있는 곳(또는 콘솔) |
+| 14-6 검증 | EC2 서버 |
+
+### 14-1. 업로드 디렉터리 확인 (서버에서)
 
 2-1단계에서 만들지 않았다면 지금 만든다. 이미 있으면 소유자·권한만 확인한다.
 
@@ -542,8 +555,10 @@ ls -ld /var/www/manager/uploads /var/www/manager/uploads/tasks   # manager:manag
 스트리밍한다. 디스크상의 파일명은 확장자 없는 무작위 hex이고, **원본 파일명과의 대응은
 DB(`TaskAttachment`)에만 있다.** 아래 복구 절차가 DB 시점과 짝을 이뤄야 하는 이유다.
 
-### 14-2. S3 버킷 준비
+### 14-2. S3 버킷 준비 (관리자 권한이 있는 곳에서)
 
+**서버에서 실행하지 않는다** — 서버 역할에는 `PutObject`밖에 없어서 버킷을 만들
+권한이 없다. 콘솔에서 만들어도 되고, admin 자격증명이 있는 머신에서 아래를 돌려도 된다.
 RDS와 같은 리전(`ap-northeast-2`)에 만든다. 백업에 `.env`와 서명키가 들어가므로
 **퍼블릭 액세스 차단은 선택이 아니다.**
 
@@ -574,10 +589,14 @@ aws s3api put-bucket-lifecycle-configuration --bucket "$BUCKET" \
   }]}'
 ```
 
-### 14-3. 권한 — 액세스 키 대신 인스턴스 역할
+### 14-3. 권한 — 액세스 키 대신 인스턴스 역할 (콘솔에서)
 
 서버에 장기 자격증명 파일을 두지 않는 쪽을 쓴다. EC2 인스턴스 역할에 아래 정책을
 붙이면 `aws` CLI가 자동으로 그 권한을 집어간다.
+
+콘솔에서 IAM > 역할 > (이 인스턴스의 역할) > 인라인 정책 추가. 인스턴스에 역할이
+아직 없으면 새로 만들어 EC2 > 인스턴스 > 작업 > 보안 > IAM 역할 수정에서 붙인다.
+역할을 새로 붙이거나 바꿔도 **인스턴스를 재시작할 필요는 없다.**
 
 ```json
 {
@@ -597,7 +616,7 @@ aws s3api put-bucket-lifecycle-configuration --bucket "$BUCKET" \
 > 인스턴스 역할을 쓸 수 없는 환경이면 전용 IAM 사용자의 액세스 키를 발급해
 > `/root/.aws/credentials`(`chmod 600`)에 두되, 권한은 위와 똑같이 `PutObject`만 준다.
 
-### 14-4. cron 등록
+### 14-4. cron 등록 (서버에서)
 
 스크립트는 저장소에 들어 있다(`server/scripts/backup-manager.sh`). 대상 디렉터리가
 `manager` 소유 `drwxr-x---`라 **root로 돌려야 한다.**
@@ -618,7 +637,7 @@ sudo chmod 644 /etc/cron.d/manager-backup
 sudo chmod +x /var/www/manager/app/server/scripts/backup-manager.sh
 ```
 
-### 14-5. RDS 자동 백업 확인
+### 14-5. RDS 자동 백업 확인 (관리자 권한이 있는 곳에서)
 
 첨부 복구가 DB 시점에 묶이므로, RDS 쪽 보존 기간이 업로드 백업 주기보다 짧으면
 "파일은 있는데 그 시점 DB가 없는" 상태가 된다. 한 번 확인해 둔다.
@@ -631,7 +650,7 @@ aws rds describe-db-instances --db-instance-identifier database-1 \
 
 보존일수가 0이면 자동 백업이 꺼져 있는 것이다 — 최소 7일 이상으로 올린다.
 
-### 14-6. 검증
+### 14-6. 검증 (서버에서)
 
 ```bash
 sudo BACKUP_S3_BUCKET=acmebloc-manager-backup /var/www/manager/app/server/scripts/backup-manager.sh
