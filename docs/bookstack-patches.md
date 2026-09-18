@@ -1,5 +1,9 @@
 # BookStack 서버 커스터마이징
 
+> **상태**: 상시유지보수
+> **최종 확인**: 2026-09-18 · `f9e82f5`
+> **미진행**: 없음 — 단, 7·9번은 BookStack을 올릴 때마다 다시 적용해야 한다
+
 게시판(`manager.acmebloc.com/board`)은 BookStack을 그대로 쓰지 않고, Manager와 하나의
 서비스처럼 보이도록 손댄 부분이 있다. BookStack은 이 저장소가 아니라 서버의
 `/var/www/bookstack/app`에 별도로 clone되어 있어서, 그 내용은 여기에 커밋되지 않는다.
@@ -14,6 +18,9 @@
 
 현재 3번에 해당하는 건 `app/Users/Models/User.php` **하나뿐**이다. 모델은 테마로
 덮어쓸 수 없어서 어쩔 수 없다.
+
+아래 표의 마지막 열은 완료 여부가 아니라 **내구성**이다 — "BookStack을 업그레이드해도
+그대로 남는가". 전부 적용된 상태이고, `재적용 필요`인 것만 업그레이드 후 손이 간다.
 
 | # | 대상 | 내용 | 업그레이드 시 |
 |---|---|---|---|
@@ -32,6 +39,7 @@
 | 13 | 설정 DB (커스텀 head) | 파비콘을 Manager와 통일 | 유지 |
 | 14 | Apache vhost | Authorization 헤더를 PHP로 전달 (API 토큰 인증 선행조건) | 유지 |
 | 15 | `themes/acmebloc/layouts/parts/header-links(-shelves).blade.php`, `header.blade.php` (11번 갱신) | 서브메뉴(공간/문서함/설정) 활성 상태 표시 | 유지 (※ 아래 주의) |
+| 16 | `themes/acmebloc/layouts/parts/header.blade.php` (11번 갱신) | 모바일 헤더 — 1뎁스를 햄버거+서랍으로 | 유지 (※ 아래 주의) |
 
 > **※ 뷰 오버라이드 주의** — 5·6·12번(`header-links.blade.php` 포함)은 삭제되지는
 > 않지만 **낡을 수 있다.** 테마의 복사본이 원본을 완전히 대체하므로, 업그레이드로
@@ -1092,8 +1100,8 @@ BookStack 기본 헤더는 지금 보고 있는 페이지가 뭔지에 따라 �
 기능이 없다. 12번에서 이미 우리가 소유한 파일(`header-links-shelves.blade.php`는
 직접 작성, `header-links.blade.php`는 원본을 복사해 수정)이라 `request()->is()`로
 직접 조건부 `active` 클래스를 넣는다 — 새 파일도, 코어 수정도 아니라서 안전하다.
-스타일은 11번(V9)에 이미 추가해뒀다(`.header-links a.active`,
-`.acmebloc-header-shelves a.active`).
+스타일은 11번에 이미 추가해뒀다(`.header-links a.active`,
+`.acmebloc-header-shelves a.active`). 그 스니펫의 마커는 16번에서 V21로 올라갔다.
 
 ```bash
 BS=/var/www/bookstack/app
@@ -1589,7 +1597,9 @@ sudo grep -E "^\s*'(shelf|book|chapter|page)'\s*=>" $BS/lang/ko/entities.php 2>/
   || sudo grep -E "^\s*'(shelf|book|chapter|page)'\s*=>" $BS/resources/lang/ko/entities.php 2>/dev/null
 echo
 echo "=== 게시판 서브메뉴 마커 (1 이상이어야 정상) ==="
-sudo grep -c "MANAGER-NAV-V9" $BS/themes/acmebloc/layouts/parts/header.blade.php
+# 마커 버전은 스니펫을 고칠 때마다 올라간다(11번 V9 → 16번 V21). 여기 숫자를 같이
+# 안 올리면 정상 서버에서도 0이 나와 "패치가 빠졌다"고 잘못 보고한다 — 실제로 그랬다.
+sudo grep -c "MANAGER-NAV-V21" $BS/themes/acmebloc/layouts/parts/header.blade.php
 echo
 echo "=== 로고 삭제(header.blade.php가 shelves 파샬을 쓰는지, 1이어야 정상) ==="
 sudo grep -c "header-links-shelves" $BS/themes/acmebloc/layouts/parts/header.blade.php

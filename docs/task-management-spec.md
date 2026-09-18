@@ -1,24 +1,26 @@
 # 일감관리(칸반) 기능 명세
 
-프로젝트 섹션과 권한 체계(`ProjectMember.role` = pm/pl/member, `User.isSiteAdmin`) 위에
-얹는 기능. 원래는 구현 전 합의된 내용과 아직 정하지 못한 항목을 함께 담은 설계 문서였다.
+> **상태**: 배포완료
+> **최종 확인**: 2026-09-18 · `f9e82f5`
+> **미진행**: 없음
 
-**1단계 구현·배포 완료 (2026-08-25).** 당시 미확정이던 항목은 실제 구현하면서 전부
-확정됐고, 8장에 그 결과를 정리해뒀다 — 나머지 장(2~7장)의 본문은 설계 당시 그대로라
-실제 코드와 다른 부분이 있으면 8장 쪽이 맞다.
+프로젝트 섹션과 권한 체계(`ProjectMember.role`, `User.isSiteAdmin`) 위에 얹는 기능.
+8장에는 설계 당시 정하지 못했던 항목들을 실제 구현 기준으로 정리해뒀다.
 
 ## 1. 범위
 
-| 단계 | 내용 | 상태 |
-| --- | --- | --- |
-| 1 | Task 필드 확장, 권한 규칙, 칸반 보드, 일감 상세 | 완료 |
-| 1 | 댓글 + @멘션 | 완료 |
-| 1 | 첨부파일 | 완료 (설계는 5장) |
-| 2 | 멘션 알림 | 미룸 — 알림 시스템 자체가 없음 |
-| 3 | 프로젝트별 BookStack 책장 자동 생성 | 미룸 ([[per-project-access-control-planned]]) |
-| 마지막 | 통합 검색 | 스키마가 굳고 데이터가 쌓인 뒤 |
+| 내용 | 설계 |
+| --- | --- |
+| Task 필드 확장, 권한 규칙, 칸반 보드, 일감 상세 | 2~4장 |
+| 댓글 + @멘션 | 6장 |
+| 첨부파일 | 5장 |
+| 마크다운 에디터 (MDXEditor 툴바형 WYSIWYG) | 7장 |
 
-마크다운 에디터는 MDXEditor(툴바형 WYSIWYG)로 확정됐다 — 7장 참고.
+이 문서 이후에 붙은 기능들은 각자 별도 문서를 갖는다 — 멘션·마감 알림은
+`docs/email-notifications-spec.md`, 프로젝트별 BookStack 책장은
+[[per-project-access-control-planned]], 검수 흐름은 `docs/task-review-spec.md`,
+일감 사이 관계는 `docs/task-relations-spec.md`. 통합 검색은
+`server/src/routes/search.js`로 구현됐다(별도 설계 문서 없음).
 
 ## 2. 데이터 모델
 
@@ -45,7 +47,8 @@ model Task {
 - 유형/등급/상태는 Prisma enum이 아니라 **문자열 + 코드 레벨 검증**. 기존
   `ProjectMember.role`, `Task.status`가 이미 그 관례다.
 - 상태 키는 `todo`를 그대로 살려 "등록"에 매핑한다. 덕분에 기존 행의 status
-  마이그레이션이 필요 없다. 표시 라벨은 등록 / 진행 / 검수 / 완료.
+  마이그레이션이 필요 없다. 표시 라벨은 `src/lib/taskFields.js`의 `TASK_STATUSES`가
+  단일 출처다 — 문서에 옮겨 적지 않는다(검수 기능에서 한 번 바뀐 적이 있다).
 - `dueDate` → `endAt` rename은 프로젝트(`startAt`/`endAt`)와 이름을 맞추기 위한 것.
   Prisma `@map`으로 컬럼명만 유지하는 대신 실제 rename 마이그레이션으로 간다.
 - `createdById` backfill: 기존 행은 소속 프로젝트의 `ownerId`(= 프로젝트를 만든 사람)로
@@ -88,7 +91,7 @@ model TaskCommentMention {
   프로젝트 멤버십으로 권한 스코핑이 가능하다.
 - 본문·파일명은 **평문**. `User.email/name/picture`만 AES-GCM 암호화 대상이고,
   응답에 사용자 정보를 실을 때는 반드시 `decryptUser()`를 통과시킨다.
-- `TaskCommentMention`은 지금은 렌더링/역참조용이고, 2단계 알림에서 그대로 쓴다.
+- `TaskCommentMention`은 렌더링/역참조용이자, 이후 붙은 멘션 알림의 발송 근거다.
 
 ## 3. 권한 규칙
 
@@ -136,7 +139,8 @@ model TaskCommentMention {
 상세 페이지에는 그 프로젝트의 `/tasks?projectId=` 바로가기만 있고, 칸반 자체는
 없다.
 
-- 등록 / 진행 / 검수 / 완료 4개 컬럼 고정. 프로젝트별 커스텀 컬럼 없음.
+- 상태 4개를 그대로 컬럼으로 쓴다(라벨은 `src/lib/taskFields.js`의 `TASK_STATUSES`).
+  프로젝트별 커스텀 컬럼 없음.
 - 카드: 제목, 유형·등급 배지, 담당자 아바타, 종료일, 첨부/댓글 개수.
 - 컬럼 내 정렬은 자동(등급 → 종료일 → 생성일). 사용자 지정 순서(`order` 필드) 없음.
 - 드래그로 상태 변경, 권한 없으면 비활성.
@@ -169,14 +173,18 @@ DB 크기·백업 시간·메모리 사용이 모두 파일 크기에 비례해 
 - `storageKey`는 랜덤 값이며 **확장자를 붙이지 않는다.** 웹서버가 실수로
   직접 서빙하거나 MIME을 sniff할 여지를 없앤다.
 - 원본 파일명·MIME·크기는 DB(`TaskAttachment`)에만 둔다.
-- nginx는 이 디렉터리를 **서빙하지 않는다.** 권한 검사가 필요하므로 Express가 스트리밍한다.
-- 업로드 디렉터리는 DB와 별개의 백업 대상이 된다 — 운영 문서에 명시할 것.
+- 웹서버(Apache)는 이 디렉터리를 **서빙하지 않는다.** 권한 검사가 필요하므로 Express가
+  스트리밍한다.
+- 업로드 디렉터리는 DB와 별개의 백업 대상이다 — `server/DEPLOY.md` 14단계에 생성·권한·
+  정기 백업·복구 절차를 정리해뒀다. 파일명이 무작위 hex라 **DB 없이 파일만 복원하면
+  무엇이 무엇인지 알 수 없다**는 점도 거기 적혀 있다.
 
 ### 5.2 업로드
 
 - `multer` diskStorage. 새 의존성 1개 추가.
 - 제한: 파일당 **20MB**, 일감당 **10개**.
-- nginx `client_max_body_size 25m;` 필요 (현재 기본값이면 1MB에서 막힌다).
+- 웹서버 본문 크기 상한을 함께 올려야 한다 — 실제 배포는 Apache이므로
+  `LimitRequestBody 26214400` (`server/DEPLOY.md` 9단계).
 - 검증: 확장자 allowlist **와** MIME allowlist를 모두 통과해야 한다.
   - 문서: `xlsx xls csv docx doc pptx ppt pdf hwp hwpx txt`
   - 압축: `zip`
@@ -221,10 +229,11 @@ DB 크기·백업 시간·메모리 사용이 모두 파일 크기에 비례해 
 
 - 본문에 표시 이름만 남기면 동명이인·개명에서 깨진다. `@[김김김](user:<cuid>)` 형태의
   마커로 저장하고, 렌더 시점에 userId로 현재 이름을 다시 가져온다 → 개명이 반영된다.
-- 동시에 `TaskCommentMention` 행을 남긴다. 지금은 역참조용, 2단계 알림에서 사용.
-- 렌더링은 하이라이트까지만. **알림은 이번 범위 밖** (알림 시스템 자체가 없음).
+- 동시에 `TaskCommentMention` 행을 남긴다. 역참조용이자 알림 발송의 근거다.
+- 렌더링은 하이라이트까지. 멘션 알림(메일·인앱)은 이후 별도로 붙였다 —
+  `docs/email-notifications-spec.md`와 `server/src/lib/notifications.js`.
 
-## 7. 마크다운 에디터 (확정)
+## 7. 마크다운 에디터
 
 **(b) 툴바형 WYSIWYG로 확정** — `@mdxeditor/editor` + `@mdxeditor/typeahead-plugin`
 (`src/components/MarkdownEditor.jsx`). 렌더링은 `react-markdown` + `remark-gfm`
@@ -238,7 +247,7 @@ DB 크기·백업 시간·메모리 사용이 모두 파일 크기에 비례해 
 - `@` 멘션은 MDXEditor의 typeahead 플러그인을 그대로 써서 6장 설계(초성 매칭,
   `user:<cuid>` 마커)를 얹었다 — `mentionConfig()` 참고.
 
-## 8. 설계 당시 미확정이었던 항목 — 실제 구현 기준 정리
+## 8. 설계 당시 열어뒀던 항목 — 실제 구현 기준 정리
 
 전부 구현하면서 확정됐다. 각 항목은 3~7장 본문에도 반영해뒀고, 여기엔 최종 결론과
 근거 코드만 모아둔다.
@@ -261,7 +270,7 @@ DB 크기·백업 시간·메모리 사용이 모두 파일 크기에 비례해 
    문제 제기가 없었다.
 
 일감관리 자체와 별개로, 이어서 만든 **일정(스케줄) 기능**의 설계·확정 내용은
-[[task-management-complete-schedule-next]] 메모리를 참고할 것 — 이 문서 범위 밖이다.
+[[task-management-complete-schedule-next]] 메모리를 참고할 것 — 이 문서가 다루지 않는다.
 
 **후속 수정 (2026-08-26)**: `myTasks.js`가 원래 "내가 실제 멤버인 프로젝트"만 조회해서,
 사이트 어드민이 `/tasks`(일감)에서는 본인이 멤버가 아닌 프로젝트를 못 보는 비대칭이
@@ -270,22 +279,22 @@ DB 크기·백업 시간·메모리 사용이 모두 파일 크기에 비례해 
 `myTasks.js`에도 추가해서 맞췄다 — 이제 사이트 어드민은 `/tasks`에서도 사이트의
 모든 프로젝트를 본다.
 
-## 9. 기존 코드에 미치는 영향
+## 9. 이 기능이 기존 코드에 미친 영향
 
-- **`server/src/routes/myTasks.js`** — 지금은 `assigneeId: req.user.id`로 필터해
-  "내게 배정된 일감"만 반환한다. 4.1의 요구("프로젝트에 발행된 전체 일감")로 바뀌었으니
-  이 필터를 제거하고, "내 일감만 보기"는 클라이언트 토글로 옮긴다.
-- **`server/src/routes/tasks.js:27`** — GET이 존재하지 않는 역할 `'viewer'`를 요구한다.
-  `RANK['viewer']`가 `undefined`라 비교가 항상 false가 되어 우연히 통과하는 상태.
-  `'member'`로 바로잡는다.
-- **`assertAssigneeIsMember`** — 4.4 때문에 조건을 다듬어야 한다. 새 담당자를 지정할
-  때는 멤버십을 강제하되, **기존의 비멤버 담당자를 그대로 유지하는 PATCH는 통과**해야
-  한다. 그렇지 않으면 담당자가 프로젝트에서 빠진 일감은 아무도 수정할 수 없게 된다
-  (프론트가 폼 전체를 보내면 변경 없는 `assigneeId`가 400을 유발).
-- **`src/pages/TasksPage.jsx`** — 현재 빈 페이지. 4.1 화면으로 채운다.
-- **프로덕션 데이터** — `createdById` backfill 대상 건수 확인이 필요하다:
-  `SELECT status, count(*) FROM "Task" GROUP BY status;`
-- **배포 순서** — 스키마가 바뀌므로 `git pull` → `prisma migrate deploy && npx prisma
-  generate` (postinstall이 막혀 있어 generate를 반드시 명시적으로) → `npm run build`
-  → `pm2 restart manager-api`. 첨부파일 도입 시 nginx `client_max_body_size`와
-  uploads 디렉터리 생성·권한도 함께 필요하다.
+설계 당시엔 "앞으로 이렇게 고쳐야 한다"는 목록이었다. 전부 반영됐으므로 결과로 적는다.
+
+- **`server/src/routes/myTasks.js`** — 원래 `assigneeId: req.user.id`로 필터해 "내게
+  배정된 일감"만 반환하던 것을 4.1의 요구("프로젝트에 발행된 전체 일감")에 맞춰 필터를
+  걷어냈다. "내 일감만 보기"는 클라이언트 토글로 옮겼다.
+- **`server/src/routes/tasks.js`** — GET이 존재하지 않는 역할 `'viewer'`를 요구하고
+  있었다. `RANK['viewer']`가 `undefined`라 비교가 항상 false가 되어 우연히 통과하던
+  상태였고, `'member'`로 바로잡았다.
+- **`assertProjectMember`(구 `assertAssigneeIsMember`)** — 4.4 때문에 조건을 다듬었다.
+  새 담당자를 지정할 때는 멤버십을 강제하되, **기존의 비멤버 담당자를 그대로 유지하는
+  PATCH는 통과**시킨다. 안 그러면 담당자가 프로젝트에서 빠진 일감은 아무도 수정할 수
+  없게 된다(폼이 전체를 보내므로 변경 없는 `assigneeId`가 400을 유발한다).
+- **`src/pages/TasksPage.jsx`** — 빈 페이지였고, 4.1 화면으로 채웠다. 지금은 보드/목록/
+  관계도 세 뷰를 갖는다(`docs/task-relations-spec.md` 6장).
+- **배포** — 이 기능은 스키마를 바꿨으므로 `prisma migrate deploy` 뒤 `npx prisma
+  generate`가 필요했다. 첨부파일 때문에 Apache `LimitRequestBody`와 업로드 디렉터리
+  생성·권한도 함께 필요하다 — 지금은 둘 다 `server/DEPLOY.md`(9단계·14단계)에 있다.

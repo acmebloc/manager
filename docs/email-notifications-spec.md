@@ -1,11 +1,11 @@
 # 이메일 알림 기능 명세
 
-`docs/task-management-spec.md` 2단계 "멘션 알림"이 "알림 시스템 자체가 없음"으로
-미뤄졌던 항목의 후속.
+> **상태**: 배포완료
+> **최종 확인**: 2026-09-18 · `f9e82f5`
+> **미진행**: 없음
 
-**구현·배포·프로덕션 검증 완료 (2026-08-28).** 코드는 6장 참고 — 나머지
-장(1~5장)은 설계 당시 기록 그대로라 실제 코드와 다른 부분이 있으면 6장 쪽이
-맞다. 프로덕션에서 실제 계정 간 멘션으로 수신 확인 완료.
+`docs/task-management-spec.md`가 다루지 않았던 멘션 알림의 후속. 프로덕션에서 실제
+계정 간 멘션으로 수신까지 확인했다. 구현은 6장 참고.
 
 **배포 당시 있었던 이슈 (둘 다 해결됨):**
 - SMTP 릴레이 허용 목록에 IP를 등록해도 Google 쪽 반영에 최대 하루 정도
@@ -35,14 +35,14 @@ Workspace 인프라를 그대로 쓰는 쪽으로 결정.
 발신 계정을 특정 개인 계정의 비밀번호/앱 비밀번호에 묶지 않기 위해, 계정 인증
 방식이 아니라 **서버 IP를 허용 목록에 등록하는 SMTP 릴레이** 방식(안 B)을 채택.
 
-### 2.1 필요 설정 — **1단계(그룹 생성)·2단계(SMTP 릴레이) 완료 (2026-08-27)**
+### 2.1 필요 설정
 
 구글 공식 문서([그룹 만들기](https://support.google.com/a/answer/9400082),
 [SMTP 릴레이 설정](https://support.google.com/a/answer/2956491)) 기준, `admin.google.com`에서:
 
 **A. 발신용 그룹 생성**
 1. 디렉토리(Directory) > 그룹(Groups) > "그룹 만들기"
-2. 그룹 이메일 주소 입력. **주소명 미정** (예: `notifications@acmebloc.com`)
+2. 그룹 이메일 주소 입력 — `notifications@acmebloc.com`으로 정했다(6장).
 3. 액세스 유형 "공지 전용(Announcement only)" 선택 — 게시 권한을 관리자/소유자만으로,
    가입을 "초대받은 사용자만"으로 제한. 멤버는 안 넣어도 됨(발신 전용이라 수신자 불필요).
 
@@ -54,10 +54,10 @@ Workspace 인프라를 그대로 쓰는 쪽으로 결정.
 3. 인증: "지정된 IP 주소에서만 메일 수신" 체크 → IP 추가: `15.164.69.195/32`
 4. 필요시 "TLS 암호화 필요" 체크 후 저장
 
-⚠ 미확인 사항: 구글 문서에 "MAIL FROM 주소가 등록된 Workspace 사용자 주소면
-Gmail 라이선스가 있어야 한다"는 조건이 있음 — "내 도메인의 모든 주소" 옵션에도
-적용되는지 불확실. 설정 후 테스트 발송으로 확인, 라이선스 에러로 반송되면 그룹
-대신 라이선스 있는 실제 계정 주소를 From으로 전환.
+설정 당시 걸렸던 것: 구글 문서에 "MAIL FROM 주소가 등록된 Workspace 사용자
+주소면 Gmail 라이선스가 있어야 한다"는 조건이 있어, "내 도메인의 모든 주소"
+옵션에도 적용되는지 불확실했다. 실제로는 그룹 주소 그대로 발송이 되고 있다 —
+라이선스 에러로 반송되면 그때 라이선스 있는 실제 계정 주소를 From으로 돌리면 된다.
 
 **C. 서버 연결**
 - 서버(`nodemailer`)는 `smtp-relay.gmail.com:587`(TLS)로 연결
@@ -89,12 +89,13 @@ Gmail 라이선스가 있어야 한다"는 조건이 있음 — "내 도메인�
 대신 메일 내용을 콘솔에 로그만 찍는 방식으로 대체. 배포 서버에만 SMTP 관련
 env 값을 채워서 실제 발송이 켜지게 함.
 
-## 5. 1차 구현 범위에서 제외한 것
+## 5. 하지 않는 것
 
-- 메일 수신 개인별 on/off 설정 — 나중에 필요해지면 추가 (스키마/UI 추가 비용
-  대비 지금은 근거 부족)
+현재 없다. 1차 때 뺐던 "메일 수신 개인별 on/off"는 이후 구현됐다 —
+`User.emailNotificationsEnabled`와 `server/src/lib/notificationPrefs.js`의
+`wantsEmailNotifications`, MyPage의 토글.
 
-## 6. 구현 (2026-08-27)
+## 6. 구현
 
 - `server/src/lib/mailer.js` (신규) — 발송 저수준(`sendMail`, SMTP_HOST 없으면
   콘솔 로그로 대체)과 알림 3종 템플릿(`notifyMention`/`notifyAssigned`/
@@ -116,5 +117,7 @@ env 값을 채워서 실제 발송이 켜지게 함.
   `/projects/:projectId`, 일정 참조자는 프로젝트 일정이면
   `/schedule?projectId=:projectId`, 개인 일정이면 `/schedule` (특정 일정으로
   바로 스크롤하는 딥링크는 프론트에 없어서 페이지 단위로만 연결됨).
-- 남은 작업: `server/DEPLOY.md` 12장대로 배포 서버에 `npm install` +
-  `.env`에 `SMTP_HOST`/`SMTP_PORT`/`MAIL_FROM` 추가.
+- 배포 서버 설정(`npm install` + `.env`의 `SMTP_HOST`/`SMTP_PORT`/`MAIL_FROM`)은
+  `server/DEPLOY.md` 12단계에 있고, 적용 완료됐다. `SMTP_HOST`만 있고 `MAIL_FROM`이
+  없으면 서버가 기동을 거부한다(`envCheck.js`) — 예전엔 From 없이 발송을 시도하다
+  아무도 메일을 못 받는 상태가 될 수 있었다.
