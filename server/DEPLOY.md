@@ -44,11 +44,19 @@ dig +short manager.acmebloc.com
 ```bash
 sudo useradd -r -m -d /var/www/manager -s /usr/sbin/nologin manager
 sudo chown manager:manager /var/www/manager
+
+# 일감 첨부가 저장될 곳. 배포 디렉터리(/var/www/manager/app)의 **형제**라
+# git pull / npm ci가 건드리지 않는다 — 코드와 수명이 다른 데이터다.
+sudo -u manager mkdir -p /var/www/manager/uploads/tasks
+sudo chmod 750 /var/www/manager/uploads
 ```
 
 - `manager` 계정으로 SSH 직접 로그인은 안 되지만, `sudo -u manager <명령어>`로 그 계정 권한으로
   명령 실행 가능 (프로세스/파일 소유자 분리 목적)
 - 나중에 다른 사이트 추가할 땐 `manager` 대신 그 사이트 이름으로 동일 패턴 반복 (예: `/var/www/blog` + `blog` 계정)
+- 업로드 디렉터리는 서버가 뜰 때 없으면 스스로 만들기도 한다(`server/src/lib/uploads.js`).
+  그래도 여기서 만들어 두는 건 **소유자와 권한을 의도대로 박아두기 위해서**다 — 이 디렉터리는
+  DB 백업으로 복구되지 않으므로 14단계의 정기 백업 대상이기도 하다
 
 ### 2-2. RDS에 전용 데이터베이스 + 전용 계정 생성
 
@@ -321,8 +329,28 @@ sudo certbot --apache -d manager.acmebloc.com
   홈 화면 "게시판 문서" 수가 조용히 0으로 나오는 증상으로 먼저 드러난다
 - `<Directory "/var/www/bookstack">` 거부 — `public/` 위쪽(`.env`, `storage/` 등)이
   웹으로 노출되지 않게 막는다. **빠뜨리면 안 된다**
-- `<Location>` 3개 — 8번 항목. `/board/oidc/logout`은 419를 돌려주는데, 나머지 둘과
-  같은 형태인데도 그렇다(원인 미상, 차단 자체는 동작함)
+- `<Location>` 3개 — 8번 항목. `/board/oidc/logout`은 나머지 둘과 같은 형태인데도
+  403이 아니라 **419**를 돌려준다. 차단 자체는 동작하므로 그대로 두고 있다.
+
+  419는 Apache가 쓰는 코드가 아니라 Laravel(BookStack)의 "Page Expired"(CSRF 토큰
+  불일치)다. 즉 **Apache가 막기 전에 BookStack이 먼저 응답하고 있을 가능성이 높다** —
+  `<Location>` 경로가 실제 요청 URL과 어긋나서 매칭이 안 되는 경우다. 확인하려면:
+
+  ```bash
+  # 1) 응답을 누가 만들었는지 — Laravel이면 세션/CSRF 관련 헤더가 붙는다
+  curl -sI https://manager.acmebloc.com/board/oidc/logout | head -20
+
+  # 2) Alias/Location 매칭 과정을 실제로 본다 (확인 후 LogLevel은 꼭 되돌릴 것)
+  sudo sed -i 's/^\(\s*\)LogLevel .*/\1LogLevel alias:trace3/' \
+    /etc/apache2/sites-available/manager.acmebloc.com-le-ssl.conf
+  sudo systemctl reload apache2
+  sudo tail -f /var/log/apache2/error.log    # 다른 창에서 위 curl을 한 번 더
+  ```
+
+  1)에서 `Set-Cookie: XSRF-TOKEN=...` 같은 Laravel 흔적이 보이면 Apache가 못 막고
+  있는 것이고, 그렇다면 `<Location>` 대신 `<LocationMatch "^/board/oidc/logout">`로
+  바꾸는 게 다음 수순이다. **아직 서버에서 확인하지 않았다** — 확인한 뒤 이 문단을
+  결론으로 바꿀 것.
 
 적용:
 
@@ -488,6 +516,168 @@ exit   # manager 셸에서 나가기
 sudo -u manager pm2 restart manager-api
 curl http://localhost:4000/health
 ```
+
+## 14. 첨부 업로드 디렉터리 + 정기 백업 반영 (기존 배포에 추가 적용)
+
+RDS는 자동 백업이 있지만, **DB 백업만으로는 복구되지 않는 게 셋 있다.**
+
+| 대상 | 없으면 생기는 일 |
+|---|---|
+| `/var/www/manager/uploads` | 일감에 첨부 목록은 보이는데 파일을 받을 수 없다 |
+| `<app>/server/keys/` | 게시판 로그인만 조용히 깨진다 (6단계 OIDC 서명키 설명 참고) |
+| `<app>/server/.env` | `FIELD_ENCRYPTION_KEY`가 사라지면 사용자 이름·이메일을 **영영** 못 읽는다 (6단계 경고) |
+
+### 14-1. 업로드 디렉터리 확인
+
+2-1단계에서 만들지 않았다면 지금 만든다. 이미 있으면 소유자·권한만 확인한다.
+
+```bash
+sudo -u manager mkdir -p /var/www/manager/uploads/tasks
+sudo chmod 750 /var/www/manager/uploads
+ls -ld /var/www/manager/uploads /var/www/manager/uploads/tasks   # manager:manager, drwxr-x---
+```
+
+경로를 바꾸려면 `.env`에 `TASK_UPLOAD_DIR`을 넣는다(비우면 위 경로가 기본값).
+이 디렉터리는 Apache가 직접 서빙하지 않는다 — 다운로드는 Express가 권한을 확인한 뒤
+스트리밍한다. 디스크상의 파일명은 확장자 없는 무작위 hex이고, **원본 파일명과의 대응은
+DB(`TaskAttachment`)에만 있다.** 아래 복구 절차가 DB 시점과 짝을 이뤄야 하는 이유다.
+
+### 14-2. S3 버킷 준비
+
+RDS와 같은 리전(`ap-northeast-2`)에 만든다. 백업에 `.env`와 서명키가 들어가므로
+**퍼블릭 액세스 차단은 선택이 아니다.**
+
+```bash
+BUCKET=acmebloc-manager-backup   # 계정 안에서 유일한 이름으로
+
+aws s3api create-bucket --bucket "$BUCKET" --region ap-northeast-2 \
+  --create-bucket-configuration LocationConstraint=ap-northeast-2
+aws s3api put-public-access-block --bucket "$BUCKET" \
+  --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+aws s3api put-bucket-versioning --bucket "$BUCKET" \
+  --versioning-configuration Status=Enabled
+aws s3api put-bucket-encryption --bucket "$BUCKET" \
+  --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+```
+
+보관 기간은 **라이프사이클에 맡긴다** — 백업 스크립트는 아무것도 지우지 않으므로,
+스크립트 버그로 과거 백업이 날아갈 일이 없다.
+
+```bash
+aws s3api put-bucket-lifecycle-configuration --bucket "$BUCKET" \
+  --lifecycle-configuration '{"Rules":[{
+    "ID":"manager-backup-retention","Status":"Enabled",
+    "Filter":{"Prefix":"manager/"},
+    "Transitions":[{"Days":30,"StorageClass":"STANDARD_IA"}],
+    "Expiration":{"Days":365},
+    "NoncurrentVersionExpiration":{"NoncurrentDays":30}
+  }]}'
+```
+
+### 14-3. 권한 — 액세스 키 대신 인스턴스 역할
+
+서버에 장기 자격증명 파일을 두지 않는 쪽을 쓴다. EC2 인스턴스 역할에 아래 정책을
+붙이면 `aws` CLI가 자동으로 그 권한을 집어간다.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": ["s3:PutObject"],
+    "Resource": "arn:aws:s3:::acmebloc-manager-backup/manager/*"
+  }]
+}
+```
+
+`PutObject`만 준다 — 이 서버는 백업을 **쓰기만** 하면 된다. 복구할 때 읽는 건
+사람이 자기 권한으로 한다. 서버가 읽기·삭제 권한까지 갖고 있으면 서버가 털렸을 때
+백업까지 함께 털린다.
+
+> 인스턴스 역할을 쓸 수 없는 환경이면 전용 IAM 사용자의 액세스 키를 발급해
+> `/root/.aws/credentials`(`chmod 600`)에 두되, 권한은 위와 똑같이 `PutObject`만 준다.
+
+### 14-4. cron 등록
+
+스크립트는 저장소에 들어 있다(`server/scripts/backup-manager.sh`). 대상 디렉터리가
+`manager` 소유 `drwxr-x---`라 **root로 돌려야 한다.**
+
+```bash
+sudo tee /etc/cron.d/manager-backup > /dev/null <<'EOF'
+# 매일 04:10 KST. 앱의 마감 리마인더가 10:00 KST에 도니 서로 겹치지 않는다.
+CRON_TZ=Asia/Seoul
+BACKUP_S3_BUCKET=acmebloc-manager-backup
+10 4 * * * root /var/www/manager/app/server/scripts/backup-manager.sh >> /var/log/manager-backup.log 2>&1
+EOF
+sudo chmod 644 /etc/cron.d/manager-backup
+```
+
+`git pull`로 스크립트가 갱신되므로 실행 권한이 빠졌으면 한 번 채워준다:
+
+```bash
+sudo chmod +x /var/www/manager/app/server/scripts/backup-manager.sh
+```
+
+### 14-5. RDS 자동 백업 확인
+
+첨부 복구가 DB 시점에 묶이므로, RDS 쪽 보존 기간이 업로드 백업 주기보다 짧으면
+"파일은 있는데 그 시점 DB가 없는" 상태가 된다. 한 번 확인해 둔다.
+
+```bash
+aws rds describe-db-instances --db-instance-identifier database-1 \
+  --query 'DBInstances[0].{보존일수:BackupRetentionPeriod,백업창:PreferredBackupWindow}' \
+  --region ap-northeast-2
+```
+
+보존일수가 0이면 자동 백업이 꺼져 있는 것이다 — 최소 7일 이상으로 올린다.
+
+### 14-6. 검증
+
+```bash
+sudo BACKUP_S3_BUCKET=acmebloc-manager-backup /var/www/manager/app/server/scripts/backup-manager.sh
+aws s3 ls "s3://acmebloc-manager-backup/manager/$(date -u +%F)/"
+```
+
+`uploads-*.tar.gz`, `secrets-*.tar.gz`, `manifest-*.txt` 세 개가 보이면 된다.
+복원 리허설까지 한 번 해보는 걸 권한다 — 임시 디렉터리에 풀어 파일이 나오는지만
+확인하면 충분하다.
+
+```bash
+aws s3 cp "s3://acmebloc-manager-backup/manager/$(date -u +%F)/uploads-....tar.gz" /tmp/
+mkdir -p /tmp/restore-test && tar -xzf /tmp/uploads-....tar.gz -C /tmp/restore-test && ls /tmp/restore-test/uploads/tasks | head
+rm -rf /tmp/restore-test /tmp/uploads-....tar.gz
+```
+
+### 14-7. 복구 절차 (실제로 잃었을 때)
+
+**순서가 중요하다.**
+
+1. **DB를 먼저 정한다.** RDS 스냅샷 또는 PITR로 복구할 시점을 고르고, 그 시점과
+   **가장 가까운(그보다 이르지 않은) 업로드 백업**을 고른다. 백업 tar의 시각은 같은
+   폴더의 `manifest-*.txt`에 UTC로 적혀 있다. DB가 백업보다 최신이면 그 사이에 올라온
+   첨부는 "행은 있는데 파일이 없는" 상태가 된다(화면에서 다운로드만 실패한다).
+2. **서버를 띄우기 전에** 비밀값을 되돌린다. 특히 `keys/`를 복원하지 않고 띄우면
+   서버가 **새 서명키를 조용히 만들어** 같은 `kid`로 게시하고, BookStack이 캐시한
+   공개키와 어긋나 게시판 로그인만 깨진다(6단계).
+
+   ```bash
+   sudo -u manager tar -xzf secrets-....tar.gz -C /var/www/manager/app/server
+   sudo -u manager chmod 600 /var/www/manager/app/server/.env
+   ```
+
+   `.env`의 `FIELD_ENCRYPTION_KEY`와 OIDC 클라이언트 ID/시크릿은 **절대 새로 만들지
+   않는다** — 6단계의 경고가 그대로 적용된다.
+3. 업로드를 되돌린다.
+
+   ```bash
+   sudo -u manager tar -xzf uploads-....tar.gz -C /var/www/manager
+   ```
+4. 서버를 띄우고 확인한다.
+
+   ```bash
+   sudo -u manager pm2 restart manager-api
+   curl http://localhost:4000/health
+   ```
 
 ## 코드 업데이트할 때마다
 
