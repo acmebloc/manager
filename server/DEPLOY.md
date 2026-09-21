@@ -329,28 +329,12 @@ sudo certbot --apache -d manager.acmebloc.com
   홈 화면 "게시판 문서" 수가 조용히 0으로 나오는 증상으로 먼저 드러난다
 - `<Directory "/var/www/bookstack">` 거부 — `public/` 위쪽(`.env`, `storage/` 등)이
   웹으로 노출되지 않게 막는다. **빠뜨리면 안 된다**
-- `<Location>` 3개 — 8번 항목. `/board/oidc/logout`은 나머지 둘과 같은 형태인데도
-  403이 아니라 **419**를 돌려준다. 차단 자체는 동작하므로 그대로 두고 있다.
-
-  419는 Apache가 쓰는 코드가 아니라 Laravel(BookStack)의 "Page Expired"(CSRF 토큰
-  불일치)다. 즉 **Apache가 막기 전에 BookStack이 먼저 응답하고 있을 가능성이 높다** —
-  `<Location>` 경로가 실제 요청 URL과 어긋나서 매칭이 안 되는 경우다. 확인하려면:
-
-  ```bash
-  # 1) 응답을 누가 만들었는지 — Laravel이면 세션/CSRF 관련 헤더가 붙는다
-  curl -sI https://manager.acmebloc.com/board/oidc/logout | head -20
-
-  # 2) Alias/Location 매칭 과정을 실제로 본다 (확인 후 LogLevel은 꼭 되돌릴 것)
-  sudo sed -i 's/^\(\s*\)LogLevel .*/\1LogLevel alias:trace3/' \
-    /etc/apache2/sites-available/manager.acmebloc.com-le-ssl.conf
-  sudo systemctl reload apache2
-  sudo tail -f /var/log/apache2/error.log    # 다른 창에서 위 curl을 한 번 더
-  ```
-
-  1)에서 `Set-Cookie: XSRF-TOKEN=...` 같은 Laravel 흔적이 보이면 Apache가 못 막고
-  있는 것이고, 그렇다면 `<Location>` 대신 `<LocationMatch "^/board/oidc/logout">`로
-  바꾸는 게 다음 수순이다. **아직 서버에서 확인하지 않았다** — 확인한 뒤 이 문단을
-  결론으로 바꿀 것.
+- `<Location>` 3개 — 8번 항목. 한때 `/board/oidc/logout`이 나머지 둘과 다르게 403이
+  아니라 419(Laravel의 "Page Expired", Apache가 막기 전에 BookStack이 먼저 응답하고
+  있다는 뜻)를 돌려준 적이 있었으나, 2026-09-21에 `curl -sI`로 재확인하니 세 경로
+  전부 동일하게 403을 돌려준다(`Server: Apache`만 찍히고 PHP/Laravel 흔적 없음) —
+  Apache가 BookStack에 닿기 전에 정상적으로 막고 있다. 재발하면 Alias/Location
+  매칭을 `LogLevel alias:trace3`로 들여다볼 것(확인 후 반드시 되돌릴 것).
 
 적용:
 
