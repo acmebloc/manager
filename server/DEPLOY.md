@@ -2,11 +2,12 @@
 
 이 저장소는 프론트엔드(Vite + React)와 `server/`(Node + Express + Prisma API)로 구성돼 있고,
 `manager.acmebloc.com` 서브도메인 하나에 이 앱 전체(프론트+API)를 통째로 서빙하는 걸 기준으로
-작성함. `acmebloc.com` 메인 도메인은 나중에 다른 사이트용으로 남겨둠.
+작성함. `acmebloc.com` 메인 도메인은 이 앱과 별개로 관리된다 — 이 가이드는 건드리지 않는다.
 
 **확인된 서버 환경** (2026-08-20 기준)
 
-- 퍼블릭 IP: `15.164.69.195`, 메인 도메인: `https://acmebloc.com/` (이미 SSL 적용됨, 다른 사이트용으로 보존)
+- 퍼블릭 IP: `15.164.69.195`, 메인 도메인: `https://acmebloc.com/` (이미 SSL 적용됨, 이 앱과는
+  별도로 관리됨 — 이하 전 과정에서 건드리지 않는다)
 - OS/웹서버: **Ubuntu + Apache 2.4.66**
 - 현재 Apache 기본 페이지만 떠 있음, Node.js 미설치, `mod_proxy`/`mod_proxy_http` 미활성화 확인됨
 - 같은 서버에 다른 사이트도 추가 예정 → 이 앱은 전용 리눅스 사용자·디렉터리·DB로 분리
@@ -399,11 +400,12 @@ curl -s -o /dev/null -w "%{http_code}\n" \
 sudo -u manager /bin/bash
 cd /var/www/manager/app
 git pull
-npm install && npm run build
+npm ci && npm run build
 
 cd server
-npm install
+npm ci
 npx prisma migrate deploy   # email 유니크 제약 제거 마이그레이션 적용
+npx prisma generate         # npm ci 뒤엔 항상 — "왜 npm ci인가" 참고
 ```
 
 새 환경변수 `FIELD_ENCRYPTION_KEY` 추가 (`.env`에 없으면 서버가 기동 시 에러남):
@@ -419,7 +421,7 @@ echo "FIELD_ENCRYPTION_KEY=여기에_생성한_값" >> .env
 chmod 600 .env
 exit   # manager 셸에서 나가기
 
-sudo systemctl restart pm2-manager
+sudo -u manager pm2 restart manager-api
 curl http://localhost:4000/health
 ```
 
@@ -427,7 +429,7 @@ curl http://localhost:4000/health
 
 멘션/담당자 배정/일정 참조자 등록 시 이메일을 보내는 기능 추가. Google Workspace
 SMTP 릴레이로 발송하며(계정 인증 없이 이 서버의 고정 IP로 인증), 스키마 변경은
-없음 — `npm install`로 `nodemailer` 설치와 `.env` 값 추가만 하면 됨.
+없음 — `nodemailer` 설치와 `.env` 값 추가만 하면 됨.
 
 사전 조건(2026-08-27 완료, Workspace 관리 콘솔): 발신용 그룹
 `notifications@acmebloc.com` 생성, SMTP 릴레이 허용 목록에 이 서버의 고정
@@ -438,10 +440,11 @@ SMTP 릴레이로 발송하며(계정 인증 없이 이 서버의 고정 IP로 �
 sudo -u manager /bin/bash
 cd /var/www/manager/app
 git pull
-npm install && npm run build
+npm ci && npm run build
 
 cd server
-npm install   # nodemailer 추가됨
+npm ci                # nodemailer 추가됨
+npx prisma generate   # npm ci 뒤엔 항상 — "왜 npm ci인가" 참고
 ```
 
 `.env`에 SMTP 관련 값 추가 (`.env.example` 참고 — 로컬 개발 `.env`에는 넣지 않음,
@@ -456,7 +459,7 @@ EOF
 chmod 600 .env
 exit   # manager 셸에서 나가기
 
-sudo systemctl restart pm2-manager
+sudo -u manager pm2 restart manager-api
 curl http://localhost:4000/health
 ```
 
@@ -475,10 +478,10 @@ BookStack 쪽 API 토큰이 아직 없거나 만료돼도 Manager 나머지 기�
 sudo -u manager /bin/bash
 cd /var/www/manager/app
 git pull
-npm install && npm run build
+npm ci && npm run build
 
 cd server
-npm install
+npm ci
 npx prisma migrate deploy
 npx prisma generate   # migrate deploy 다음에 — 순서 바뀌면 8월 26일 사고 재발
 ```
